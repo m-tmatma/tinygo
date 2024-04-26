@@ -3,9 +3,6 @@ name: Linux
 on:
   pull_request:
   push:
-    branches:
-      - dev
-      - release
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
