@@ -18,10 +18,10 @@
 #
 # But you'll need a bit more to make TinyGo actually able to compile code:
 #
-#   make llvm-source                        # fetch compiler-rt
-#   git submodule update --init --recursive # fetch lots of other libraries and SVD files
-#   make gen-device -j4                     # build src/device/*/*.go files
-#   make wasi-libc                          # build support for wasi/wasm
+#   make llvm-source            # fetch compiler-rt
+#   git submodule update --init # fetch lots of other libraries and SVD files
+#   make gen-device -j4         # build src/device/*/*.go files
+#   make wasi-libc              # build support for wasi/wasm
 #
 # With this, you should have an environment that can compile anything - except
 # for the Xtensa architecture (ESP8266/ESP32) because support for that lives in
@@ -51,7 +51,6 @@
             go
             llvmPackages_17.llvm
             llvmPackages_17.libclang
-            llvmPackages_17.libcxx
             # Additional dependencies needed at runtime, for building and/or
             # flashing.
             llvmPackages_17.lld
@@ -78,7 +77,7 @@
             export MD5SUM=md5sum
 
             # Ugly hack to make the Clang resources directory available.
-            export GOFLAGS="\"-ldflags=-X github.com/tinygo-org/tinygo/goenv.clangResourceDir=${llvmPackages_17.clang.cc.lib}/lib/clang/17"\"
+            export GOFLAGS="\"-ldflags=-X github.com/tinygo-org/tinygo/goenv.clangResourceDir=${llvmPackages_17.clang.cc.lib}/lib/clang/17\" -tags=llvm17"
           '';
         };
       }

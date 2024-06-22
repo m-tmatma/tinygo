@@ -168,6 +168,13 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 			return BuildResult{}, errors.New("could not find wasi-libc, perhaps you need to run `make wasi-libc`?")
 		}
 		libcDependencies = append(libcDependencies, dummyCompileJob(path))
+	case "wasmbuiltins":
+		libcJob, unlock, err := WasmBuiltins.load(config, tmpdir)
+		if err != nil {
+			return BuildResult{}, err
+		}
+		defer unlock()
+		libcDependencies = append(libcDependencies, libcJob)
 	case "mingw-w64":
 		_, unlock, err := MinGW.load(config, tmpdir)
 		if err != nil {
@@ -200,6 +207,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 		MaxStackAlloc:      config.MaxStackAlloc(),
 		NeedsStackObjects:  config.NeedsStackObjects(),
 		Debug:              !config.Options.SkipDWARF, // emit DWARF except when -internal-nodwarf is passed
+		PanicStrategy:      config.PanicStrategy(),
 	}
 
 	// Load the target machine, which is the LLVM object that contains all
@@ -765,7 +773,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 			if sizeLevel >= 2 {
 				// Workaround with roughly the same effect as
 				// https://reviews.llvm.org/D119342.
-				// Can hopefully be removed in LLVM 18.
+				// Can hopefully be removed in LLVM 19.
 				ldflags = append(ldflags,
 					"-mllvm", "--rotation-max-header-size=0")
 			}
@@ -817,12 +825,24 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 					args = append(args, "--asyncify")
 				}
 
+				exeunopt := result.Executable
+
+				if config.Options.Work {
+					// Keep the work direction around => don't overwrite the .wasm binary with the optimized version
+					exeunopt += ".pre-wasm-opt"
+					os.Rename(result.Executable, exeunopt)
+				}
+
 				args = append(args,
 					opt,
 					"-g",
-					result.Executable,
+					exeunopt,
 					"--output", result.Executable,
 				)
+
+				if config.Options.PrintCommands != nil {
+					config.Options.PrintCommands(goenv.Get("WASMOPT"), args...)
+				}
 
 				cmd := exec.Command(goenv.Get("WASMOPT"), args...)
 				cmd.Stdout = os.Stdout

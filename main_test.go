@@ -15,11 +15,13 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/aykevl/go-wasm"
 	"github.com/tinygo-org/tinygo/builder"
 	"github.com/tinygo-org/tinygo/compileopts"
 	"github.com/tinygo-org/tinygo/goenv"
@@ -177,7 +179,7 @@ func TestBuild(t *testing.T) {
 		})
 		t.Run("WASI", func(t *testing.T) {
 			t.Parallel()
-			runPlatTests(optionsFromTarget("wasi", sema), tests, t)
+			runPlatTests(optionsFromTarget("wasip1", sema), tests, t)
 		})
 	}
 }
@@ -190,7 +192,10 @@ func runPlatTests(options compileopts.Options, tests []string, t *testing.T) {
 		t.Fatal("failed to load target spec:", err)
 	}
 
-	isWebAssembly := options.Target == "wasi" || options.Target == "wasm" || (options.Target == "" && options.GOARCH == "wasm")
+	// FIXME: this should really be:
+	// isWebAssembly := strings.HasPrefix(spec.Triple, "wasm")
+	isWASI := strings.HasPrefix(options.Target, "wasi")
+	isWebAssembly := isWASI || strings.HasPrefix(options.Target, "wasm") || (options.Target == "" && strings.HasPrefix(options.GOARCH, "wasm"))
 
 	for _, name := range tests {
 		if options.GOOS == "linux" && (options.GOARCH == "arm" || options.GOARCH == "386") {
@@ -250,13 +255,13 @@ func runPlatTests(options compileopts.Options, tests []string, t *testing.T) {
 			runTest("alias.go", options, t, nil, nil)
 		})
 	}
-	if options.Target == "" || options.Target == "wasi" {
+	if options.Target == "" || isWASI {
 		t.Run("filesystem.go", func(t *testing.T) {
 			t.Parallel()
 			runTest("filesystem.go", options, t, nil, nil)
 		})
 	}
-	if options.Target == "" || options.Target == "wasi" || options.Target == "wasm" {
+	if options.Target == "" || options.Target == "wasm" || isWASI {
 		t.Run("rand.go", func(t *testing.T) {
 			t.Parallel()
 			runTest("rand.go", options, t, nil, nil)
@@ -404,6 +409,64 @@ func runTestWithConfig(name string, t *testing.T, options compileopts.Options, c
 	}
 }
 
+// Test WebAssembly files for certain properties.
+func TestWebAssembly(t *testing.T) {
+	t.Parallel()
+	type testCase struct {
+		name          string
+		panicStrategy string
+		imports       []string
+	}
+	for _, tc := range []testCase{
+		// Test whether there really are no imports when using -panic=trap. This
+		// tests the bugfix for https://github.com/tinygo-org/tinygo/issues/4161.
+		{name: "panic-default", imports: []string{"wasi_snapshot_preview1.fd_write"}},
+		{name: "panic-trap", panicStrategy: "trap", imports: []string{}},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tmpdir := t.TempDir()
+			options := optionsFromTarget("wasi", sema)
+			options.PanicStrategy = tc.panicStrategy
+			config, err := builder.NewConfig(&options)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := builder.Build("testdata/trivialpanic.go", ".wasm", tmpdir, config)
+			if err != nil {
+				t.Fatal("failed to build binary:", err)
+			}
+			f, err := os.Open(result.Binary)
+			if err != nil {
+				t.Fatal("could not open output binary:", err)
+			}
+			defer f.Close()
+			module, err := wasm.Parse(f)
+			if err != nil {
+				t.Fatal("could not parse output binary:", err)
+			}
+
+			// Test the list of imports.
+			if tc.imports != nil {
+				var imports []string
+				for _, section := range module.Sections {
+					switch section := section.(type) {
+					case *wasm.SectionImport:
+						for _, symbol := range section.Entries {
+							imports = append(imports, symbol.Module+"."+symbol.Field)
+						}
+					}
+				}
+				if !slices.Equal(imports, tc.imports) {
+					t.Errorf("import list not as expected!\nexpected: %v\nactual:   %v", tc.imports, imports)
+				}
+			}
+		})
+	}
+}
+
 func TestTest(t *testing.T) {
 	t.Parallel()
 
@@ -432,7 +495,7 @@ func TestTest(t *testing.T) {
 
 			// Node/Wasmtime
 			targ{"WASM", optionsFromTarget("wasm", sema)},
-			targ{"WASI", optionsFromTarget("wasi", sema)},
+			targ{"WASI", optionsFromTarget("wasip1", sema)},
 		)
 	}
 	for _, targ := range targs {

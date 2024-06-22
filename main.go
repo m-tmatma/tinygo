@@ -285,7 +285,7 @@ func Test(pkgName string, stdout, stderr io.Writer, options *compileopts.Options
 		// Tests are always run in the package directory.
 		cmd.Dir = result.MainDir
 
-		// wasmtime is the default emulator used for `-target=wasi`. wasmtime
+		// wasmtime is the default emulator used for `-target=wasip1`. wasmtime
 		// is a WebAssembly runtime CLI with WASI enabled by default. However,
 		// only stdio are allowed by default. For example, while STDOUT routes
 		// to the host, other files don't. It also does not inherit environment
@@ -1033,9 +1033,10 @@ func findFATMounts(options *compileopts.Options) ([]mountPoint, error) {
 			if fstype != "vfat" {
 				continue
 			}
+			fspath := strings.ReplaceAll(fields[1], "\\040", " ")
 			points = append(points, mountPoint{
-				name: filepath.Base(fields[1]),
-				path: fields[1],
+				name: filepath.Base(fspath),
+				path: fspath,
 			})
 		}
 		return points, nil
@@ -1411,7 +1412,7 @@ func main() {
 	gc := flag.String("gc", "", "garbage collector to use (none, leaking, conservative)")
 	panicStrategy := flag.String("panic", "print", "panic strategy (print, trap)")
 	scheduler := flag.String("scheduler", "", "which scheduler to use (none, tasks, asyncify)")
-	serial := flag.String("serial", "", "which serial output to use (none, uart, usb)")
+	serial := flag.String("serial", "", "which serial output to use (none, uart, usb, rtt)")
 	work := flag.Bool("work", false, "print the name of the temporary build directory and do not delete this directory on exit")
 	interpTimeout := flag.Duration("interp-timeout", 180*time.Second, "interp optimization pass timeout")
 	var tags buildutil.TagsFlag

@@ -23,6 +23,7 @@ import (
 	"io/fs"
 	"runtime"
 	"syscall"
+	"time"
 )
 
 // Seek whence values.
@@ -256,6 +257,12 @@ func (f *File) SyscallConn() (conn syscall.RawConn, err error) {
 	return
 }
 
+// SetReadDeadline sets the deadline for future Read calls and any
+// currently-blocked Read call.
+func (f *File) SetReadDeadline(t time.Time) error {
+	return f.setReadDeadline(t)
+}
+
 // fd is an internal interface that is used to try a type assertion in order to
 // call the Fd() method of the underlying file handle if it is implemented.
 type fd interface {
@@ -310,6 +317,7 @@ func (e *LinkError) Unwrap() error {
 	return e.Err
 }
 
+// OpenFile flag values.
 const (
 	O_RDONLY int = syscall.O_RDONLY
 	O_WRONLY int = syscall.O_WRONLY

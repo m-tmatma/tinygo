@@ -21,7 +21,7 @@ jobs:
         # tar: needed for actions/cache@v4
         # git+openssh: needed for checkout (I think?)
         # ruby: needed to install fpm
-        run: apk add tar git openssh make g++ ruby
+        run: apk add tar git openssh make g++ ruby-dev
       - name: Work around CVE-2022-24765
         # We're not on a multi-user machine, so this is safe.
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -40,7 +40,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-source
         with:
-          key: llvm-source-17-linux-alpine-v1
+          key: llvm-source-18-linux-alpine-v1
           path: |
             llvm-project/clang/lib/Headers
             llvm-project/clang/include
@@ -65,7 +65,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-17-linux-alpine-v1
+          key: llvm-build-18-linux-alpine-v1
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'
@@ -110,6 +110,8 @@ jobs:
           gem install --version 4.0.7 public_suffix
           gem install --version 2.7.6 dotenv
           gem install --no-document fpm
+      - name: Run linter
+        run: make lint
       - name: Build TinyGo release
         run: |
           make release deb -j3 STATIC=1
@@ -191,7 +193,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-source
         with:
-          key: llvm-source-17-linux-asserts-v1
+          key: llvm-source-18-linux-asserts-v1
           path: |
             llvm-project/clang/lib/Headers
             llvm-project/clang/include
@@ -216,7 +218,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-17-linux-asserts-v1
+          key: llvm-build-18-linux-asserts-v1
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'
@@ -304,7 +306,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-source
         with:
-          key: llvm-source-17-linux-v1
+          key: llvm-source-18-linux-v1
           path: |
             llvm-project/clang/lib/Headers
             llvm-project/clang/include
@@ -329,7 +331,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-17-linux-${{ matrix.goarch }}-v1
+          key: llvm-build-18-linux-${{ matrix.goarch }}-v1
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'
@@ -353,13 +355,13 @@ jobs:
         uses: actions/cache@v4
         id: cache-binaryen
         with:
-          key: binaryen-linux-${{ matrix.goarch }}-v3
+          key: binaryen-linux-${{ matrix.goarch }}-v4
           path: build/wasm-opt
       - name: Build Binaryen
         if: steps.cache-binaryen.outputs.cache-hit != 'true'
         run: |
           sudo apt-get install --no-install-recommends ninja-build
-          git submodule update --init --recursive lib/binaryen
+          git submodule update --init lib/binaryen
           make CROSS=${{ matrix.toolchain }} binaryen
       - name: Install fpm
         run: |

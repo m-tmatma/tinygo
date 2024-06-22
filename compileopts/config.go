@@ -74,7 +74,8 @@ func (c *Config) GOARM() string {
 
 // BuildTags returns the complete list of build tags used during this build.
 func (c *Config) BuildTags() []string {
-	tags := append(c.Target.BuildTags, []string{
+	tags := append([]string(nil), c.Target.BuildTags...) // copy slice (avoid a race)
+	tags = append(tags, []string{
 		"tinygo",                                     // that's the compiler
 		"purego",                                     // to get various crypto packages to work
 		"math_big_pure_go",                           // to get math/big to work
@@ -310,7 +311,11 @@ func (c *Config) CFlags(libclang bool) []string {
 		)
 	case "wasi-libc":
 		root := goenv.Get("TINYGOROOT")
-		cflags = append(cflags, "--sysroot="+root+"/lib/wasi-libc/sysroot")
+		cflags = append(cflags,
+			"-nostdlibinc",
+			"-isystem", root+"/lib/wasi-libc/sysroot/include")
+	case "wasmbuiltins":
+		// nothing to add (library is purely for builtins)
 	case "mingw-w64":
 		root := goenv.Get("TINYGOROOT")
 		path, _ := c.LibcPath("mingw-w64")
@@ -475,9 +480,6 @@ func (c *Config) OpenOCDConfiguration() (args []string, err error) {
 		return nil, fmt.Errorf("unknown OpenOCD transport: %#v", c.Target.OpenOCDTransport)
 	}
 	args = []string{"-f", "interface/" + openocdInterface + ".cfg"}
-	for _, cmd := range c.Target.OpenOCDCommands {
-		args = append(args, "-c", cmd)
-	}
 	if c.Target.OpenOCDTransport != "" {
 		transport := c.Target.OpenOCDTransport
 		if transport == "swd" {
@@ -489,6 +491,9 @@ func (c *Config) OpenOCDConfiguration() (args []string, err error) {
 		args = append(args, "-c", "transport select "+transport)
 	}
 	args = append(args, "-f", "target/"+c.Target.OpenOCDTarget+".cfg")
+	for _, cmd := range c.Target.OpenOCDCommands {
+		args = append(args, "-c", cmd)
+	}
 	return args, nil
 }
 
