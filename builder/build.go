@@ -148,7 +148,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 		job := makeDarwinLibSystemJob(config, tmpdir)
 		libcDependencies = append(libcDependencies, job)
 	case "musl":
-		job, unlock, err := Musl.load(config, tmpdir)
+		job, unlock, err := libMusl.load(config, tmpdir)
 		if err != nil {
 			return BuildResult{}, err
 		}
@@ -156,7 +156,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 		libcDependencies = append(libcDependencies, dummyCompileJob(filepath.Join(filepath.Dir(job.result), "crt1.o")))
 		libcDependencies = append(libcDependencies, job)
 	case "picolibc":
-		libcJob, unlock, err := Picolibc.load(config, tmpdir)
+		libcJob, unlock, err := libPicolibc.load(config, tmpdir)
 		if err != nil {
 			return BuildResult{}, err
 		}
@@ -169,18 +169,19 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 		}
 		libcDependencies = append(libcDependencies, dummyCompileJob(path))
 	case "wasmbuiltins":
-		libcJob, unlock, err := WasmBuiltins.load(config, tmpdir)
+		libcJob, unlock, err := libWasmBuiltins.load(config, tmpdir)
 		if err != nil {
 			return BuildResult{}, err
 		}
 		defer unlock()
 		libcDependencies = append(libcDependencies, libcJob)
 	case "mingw-w64":
-		_, unlock, err := MinGW.load(config, tmpdir)
+		job, unlock, err := libMinGW.load(config, tmpdir)
 		if err != nil {
 			return BuildResult{}, err
 		}
-		unlock()
+		defer unlock()
+		libcDependencies = append(libcDependencies, job)
 		libcDependencies = append(libcDependencies, makeMinGWExtraLibs(tmpdir, config.GOARCH())...)
 	case "":
 		// no library specified, so nothing to do
@@ -353,10 +354,6 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 		}
 		packageActionIDJobs[pkg.ImportPath] = packageActionIDJob
 
-		// Build the SSA for the given package.
-		ssaPkg := program.Package(pkg.Pkg)
-		ssaPkg.Build()
-
 		// Now create the job to actually build the package. It will exit early
 		// if the package is already compiled.
 		job := &compileJob{
@@ -379,7 +376,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 				defer mod.Context().Dispose()
 				defer mod.Dispose()
 				if errs != nil {
-					return newMultiError(errs)
+					return newMultiError(errs, pkg.ImportPath)
 				}
 				if err := llvm.VerifyModule(mod, llvm.PrintMessageAction); err != nil {
 					return errors.New("verification error after compiling package " + pkg.ImportPath)
@@ -655,7 +652,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 	// Add compiler-rt dependency if needed. Usually this is a simple load from
 	// a cache.
 	if config.Target.RTLib == "compiler-rt" {
-		job, unlock, err := CompilerRT.load(config, tmpdir)
+		job, unlock, err := libCompilerRT.load(config, tmpdir)
 		if err != nil {
 			return result, err
 		}
@@ -749,6 +746,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 				ldflags = append(ldflags, dependency.result)
 			}
 			ldflags = append(ldflags, "-mllvm", "-mcpu="+config.CPU())
+			ldflags = append(ldflags, "-mllvm", "-mattr="+config.Features()) // needed for MIPS softfloat
 			if config.GOOS() == "windows" {
 				// Options for the MinGW wrapper for the lld COFF linker.
 				ldflags = append(ldflags,
@@ -782,7 +780,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 			}
 			err = link(config.Target.Linker, ldflags...)
 			if err != nil {
-				return &commandError{"failed to link", result.Executable, err}
+				return err
 			}
 
 			var calculatedStacks []string
@@ -840,17 +838,73 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 					"--output", result.Executable,
 				)
 
+				wasmopt := goenv.Get("WASMOPT")
 				if config.Options.PrintCommands != nil {
-					config.Options.PrintCommands(goenv.Get("WASMOPT"), args...)
+					config.Options.PrintCommands(wasmopt, args...)
 				}
-
-				cmd := exec.Command(goenv.Get("WASMOPT"), args...)
+				cmd := exec.Command(wasmopt, args...)
 				cmd.Stdout = os.Stdout
 				cmd.Stderr = os.Stderr
 
 				err := cmd.Run()
 				if err != nil {
 					return fmt.Errorf("wasm-opt failed: %w", err)
+				}
+			}
+
+			// Run wasm-tools for component-model binaries
+			witPackage := strings.ReplaceAll(config.Target.WITPackage, "{root}", goenv.Get("TINYGOROOT"))
+			if config.Options.WITPackage != "" {
+				witPackage = config.Options.WITPackage
+			}
+			witWorld := config.Target.WITWorld
+			if config.Options.WITWorld != "" {
+				witWorld = config.Options.WITWorld
+			}
+			if witPackage != "" && witWorld != "" {
+
+				// wasm-tools component embed -w wasi:cli/command
+				// 		$$(tinygo env TINYGOROOT)/lib/wasi-cli/wit/ main.wasm -o embedded.wasm
+				args := []string{
+					"component",
+					"embed",
+					"-w", witWorld,
+					witPackage,
+					result.Executable,
+					"-o", result.Executable,
+				}
+
+				wasmtools := goenv.Get("WASMTOOLS")
+				if config.Options.PrintCommands != nil {
+					config.Options.PrintCommands(wasmtools, args...)
+				}
+				cmd := exec.Command(wasmtools, args...)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+
+				err := cmd.Run()
+				if err != nil {
+					return fmt.Errorf("wasm-tools failed: %w", err)
+				}
+
+				// wasm-tools component new embedded.wasm -o component.wasm
+				args = []string{
+					"component",
+					"new",
+					result.Executable,
+					"-o", result.Executable,
+				}
+
+				if config.Options.PrintCommands != nil {
+					config.Options.PrintCommands(wasmtools, args...)
+				}
+				cmd = exec.Command(wasmtools, args...)
+				cmd.Stdout = os.Stdout
+				cmd.Stderr = os.Stderr
+
+				err = cmd.Run()
+				if err != nil {
+					return fmt.Errorf("wasm-tools failed: %w", err)
 				}
 			}
 
@@ -1078,7 +1132,7 @@ func optimizeProgram(mod llvm.Module, config *compileopts.Config, globalValues m
 	// O0/O1/O2/Os/Oz optimization pipeline).
 	errs := transform.Optimize(mod, config)
 	if len(errs) > 0 {
-		return newMultiError(errs)
+		return newMultiError(errs, "")
 	}
 	if err := llvm.VerifyModule(mod, llvm.PrintMessageAction); err != nil {
 		return errors.New("verification failure after LLVM optimization passes")
@@ -1205,7 +1259,7 @@ func determineStackSizes(mod llvm.Module, executable string) ([]string, map[stri
 	}
 
 	// Goroutines need to be started and finished and take up some stack space
-	// that way. This can be measured by measuing the stack size of
+	// that way. This can be measured by measuring the stack size of
 	// tinygo_startTask.
 	if numFuncs := len(functions["tinygo_startTask"]); numFuncs != 1 {
 		return nil, nil, fmt.Errorf("expected exactly one definition of tinygo_startTask, got %d", numFuncs)

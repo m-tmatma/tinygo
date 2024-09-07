@@ -1,4 +1,4 @@
-//go:build darwin || nintendoswitch || wasi || wasip1
+//go:build darwin || nintendoswitch || wasip1 || wasip2
 
 package syscall
 
@@ -163,6 +163,55 @@ func Unlink(path string) (err error) {
 	return
 }
 
+func Chown(path string, uid, gid int) (err error) {
+	data := cstring(path)
+	fail := int(libc_chown(&data[0], uid, gid))
+	if fail < 0 {
+		err = getErrno()
+	}
+	return
+}
+
+func Fork() (err error) {
+	fail := int(libc_fork())
+	if fail < 0 {
+		err = getErrno()
+	}
+	return
+}
+
+func Execve(pathname string, argv []string, envv []string) (err error) {
+	argv0 := cstring(pathname)
+
+	// transform argv and envv into the format expected by execve
+	argv1 := make([]*byte, len(argv)+1)
+	for i, arg := range argv {
+		argv1[i] = &cstring(arg)[0]
+	}
+	argv1[len(argv)] = nil
+
+	env1 := make([]*byte, len(envv)+1)
+	for i, env := range envv {
+		env1[i] = &cstring(env)[0]
+	}
+	env1[len(envv)] = nil
+
+	fail := int(libc_execve(&argv0[0], &argv1[0], &env1[0]))
+	if fail < 0 {
+		err = getErrno()
+	}
+	return
+}
+
+func Truncate(path string, length int64) (err error) {
+	data := cstring(path)
+	fail := int(libc_truncate(&data[0], length))
+	if fail < 0 {
+		err = getErrno()
+	}
+	return
+}
+
 func Faccessat(dirfd int, path string, mode uint32, flags int) (err error)
 
 func Kill(pid int, sig Signal) (err error) {
@@ -258,55 +307,6 @@ func Mprotect(b []byte, prot int) (err error) {
 		err = getErrno()
 	}
 	return
-}
-
-func Environ() []string {
-
-	// This function combines all the environment into a single allocation.
-	// While this optimizes for memory usage and garbage collector
-	// overhead, it does run the risk of potentially pinning a "large"
-	// allocation if a user holds onto a single environment variable or
-	// value.  Having each variable be its own allocation would make the
-	// trade-off in the other direction.
-
-	// calculate total memory required
-	var length uintptr
-	var vars int
-	for environ := libc_environ; *environ != nil; {
-		length += libc_strlen(*environ)
-		vars++
-		environ = (*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(environ), unsafe.Sizeof(environ)))
-	}
-
-	// allocate our backing slice for the strings
-	b := make([]byte, length)
-	// and the slice we're going to return
-	envs := make([]string, 0, vars)
-
-	// loop over the environment again, this time copying over the data to the backing slice
-	for environ := libc_environ; *environ != nil; {
-		length = libc_strlen(*environ)
-		// construct a Go string pointing at the libc-allocated environment variable data
-		var envVar string
-		rawEnvVar := (*struct {
-			ptr    unsafe.Pointer
-			length uintptr
-		})(unsafe.Pointer(&envVar))
-		rawEnvVar.ptr = *environ
-		rawEnvVar.length = length
-		// pull off the number of bytes we need for this environment variable
-		var bs []byte
-		bs, b = b[:length], b[length:]
-		// copy over the bytes to the Go heap
-		copy(bs, envVar)
-		// convert trimmed slice to string
-		s := *(*string)(unsafe.Pointer(&bs))
-		// add s to our list of environment variables
-		envs = append(envs, s)
-		// environ++
-		environ = (*unsafe.Pointer)(unsafe.Add(unsafe.Pointer(environ), unsafe.Sizeof(environ)))
-	}
-	return envs
 }
 
 // BytePtrFromString returns a pointer to a NUL-terminated array of
@@ -406,6 +406,11 @@ func libc_chdir(pathname *byte) int32
 //export chmod
 func libc_chmod(pathname *byte, mode uint32) int32
 
+// int chown(const char *pathname, uid_t owner, gid_t group);
+//
+//export chown
+func libc_chown(pathname *byte, owner, group int) int32
+
 // int mkdir(const char *pathname, mode_t mode);
 //
 //export mkdir
@@ -446,5 +451,17 @@ func libc_readlink(path *byte, buf *byte, count uint) int
 //export unlink
 func libc_unlink(pathname *byte) int32
 
-//go:extern environ
-var libc_environ *unsafe.Pointer
+// pid_t fork(void);
+//
+//export fork
+func libc_fork() int32
+
+// int execve(const char *filename, char *const argv[], char *const envp[]);
+//
+//export execve
+func libc_execve(filename *byte, argv **byte, envp **byte) int
+
+// int truncate(const char *path, off_t length);
+//
+//export truncate
+func libc_truncate(path *byte, length int64) int32

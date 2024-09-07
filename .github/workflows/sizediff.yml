@@ -9,7 +9,9 @@ concurrency:
 
 jobs:
   sizediff:
-    runs-on: ubuntu-22.04
+    # Note: when updating the Ubuntu version, also update the Ubuntu version in
+    # sizediff-install-pkgs.sh
+    runs-on: ubuntu-24.04
     permissions:
       pull-requests: write
     steps:

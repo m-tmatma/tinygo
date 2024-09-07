@@ -242,7 +242,7 @@ func NewTargetMachine(config *Config) (llvm.TargetMachine, error) {
 }
 
 // Sizes returns a types.Sizes appropriate for the given target machine. It
-// includes the correct int size and aligment as is necessary for the Go
+// includes the correct int size and alignment as is necessary for the Go
 // typechecker.
 func Sizes(machine llvm.TargetMachine) types.Sizes {
 	targetData := machine.CreateTargetData()
@@ -1846,9 +1846,9 @@ func (b *builder) createFunctionCall(instr *ssa.CallCommon) (llvm.Value, error) 
 			return b.emitSV64Call(instr.Args, getPos(instr))
 		case strings.HasPrefix(name, "(device/riscv.CSR)."):
 			return b.emitCSROperation(instr)
-		case strings.HasPrefix(name, "syscall.Syscall") || strings.HasPrefix(name, "syscall.RawSyscall"):
+		case strings.HasPrefix(name, "syscall.Syscall") || strings.HasPrefix(name, "syscall.RawSyscall") || strings.HasPrefix(name, "golang.org/x/sys/unix.Syscall") || strings.HasPrefix(name, "golang.org/x/sys/unix.RawSyscall"):
 			return b.createSyscall(instr)
-		case strings.HasPrefix(name, "syscall.rawSyscallNoError"):
+		case strings.HasPrefix(name, "syscall.rawSyscallNoError") || strings.HasPrefix(name, "golang.org/x/sys/unix.RawSyscallNoError"):
 			return b.createRawSyscallNoError(instr)
 		case name == "runtime.supportsRecover":
 			supportsRecover := uint64(0)
@@ -1963,7 +1963,7 @@ func (b *builder) getValue(expr ssa.Value, pos token.Pos) llvm.Value {
 			return value
 		} else {
 			// indicates a compiler bug
-			panic("local has not been parsed: " + expr.String())
+			panic("SSA value not previously found in function: " + expr.String())
 		}
 	}
 }
@@ -2017,6 +2017,8 @@ func (b *builder) createExpr(expr ssa.Value) (llvm.Value, error) {
 			sizeValue := llvm.ConstInt(b.uintptrType, size, false)
 			layoutValue := b.createObjectLayout(typ, expr.Pos())
 			buf := b.createRuntimeCall("alloc", []llvm.Value{sizeValue, layoutValue}, expr.Comment)
+			align := b.targetData.ABITypeAlignment(typ)
+			buf.AddCallSiteAttribute(0, b.ctx.CreateEnumAttribute(llvm.AttributeKindID("align"), uint64(align)))
 			return buf, nil
 		} else {
 			buf := llvmutil.CreateEntryBlockAlloca(b.Builder, typ, expr.Comment)
@@ -2223,6 +2225,7 @@ func (b *builder) createExpr(expr ssa.Value) (llvm.Value, error) {
 		sliceType := expr.Type().Underlying().(*types.Slice)
 		llvmElemType := b.getLLVMType(sliceType.Elem())
 		elemSize := b.targetData.TypeAllocSize(llvmElemType)
+		elemAlign := b.targetData.ABITypeAlignment(llvmElemType)
 		elemSizeValue := llvm.ConstInt(b.uintptrType, elemSize, false)
 
 		maxSize := b.maxSliceSize(llvmElemType)
@@ -2246,6 +2249,7 @@ func (b *builder) createExpr(expr ssa.Value) (llvm.Value, error) {
 		sliceSize := b.CreateBinOp(llvm.Mul, elemSizeValue, sliceCapCast, "makeslice.cap")
 		layoutValue := b.createObjectLayout(llvmElemType, expr.Pos())
 		slicePtr := b.createRuntimeCall("alloc", []llvm.Value{sliceSize, layoutValue}, "makeslice.buf")
+		slicePtr.AddCallSiteAttribute(0, b.ctx.CreateEnumAttribute(llvm.AttributeKindID("align"), uint64(elemAlign)))
 
 		// Extend or truncate if necessary. This is safe as we've already done
 		// the bounds check.

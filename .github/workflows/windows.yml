@@ -35,7 +35,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
           cache: true
       - name: Restore cached LLVM source
         uses: actions/cache/restore@v4
@@ -66,7 +66,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-18-windows-v1
+          key: llvm-build-18-windows-v2
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'
@@ -143,7 +143,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
           cache: true
       - name: Download TinyGo build
         uses: actions/download-artifact@v4
@@ -173,7 +173,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
           cache: true
       - name: Download TinyGo build
         uses: actions/download-artifact@v4
@@ -209,7 +209,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
           cache: true
       - name: Download TinyGo build
         uses: actions/download-artifact@v4
@@ -220,5 +220,5 @@ jobs:
         shell: bash
         working-directory: build
         run: 7z x release.zip -r
-      - name: Test stdlib packages on wasi
-        run: make tinygo-test-wasi-fast TINYGO=$(PWD)/build/tinygo/bin/tinygo
+      - name: Test stdlib packages on wasip1
+        run: make tinygo-test-wasip1-fast TINYGO=$(PWD)/build/tinygo/bin/tinygo

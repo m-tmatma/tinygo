@@ -1,4 +1,4 @@
-//go:build !baremetal && !js
+//go:build !baremetal && !js && !wasm_unknown
 
 // Portions copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -143,6 +143,20 @@ func Chmod(name string, mode FileMode) error {
 	})
 	if e != nil {
 		return &PathError{Op: "chmod", Path: name, Err: e}
+	}
+	return nil
+}
+
+// Chown changes the numeric uid and gid of the named file.
+// If the file is a symbolic link, it changes the uid and gid of the link's target.
+// A uid or gid of -1 means to not change that value.
+// If there is an error, it will be of type *PathError.
+func Chown(name string, uid, gid int) error {
+	e := ignoringEINTR(func() error {
+		return syscall.Chown(name, uid, gid)
+	})
+	if e != nil {
+		return &PathError{Op: "chown", Path: name, Err: e}
 	}
 	return nil
 }

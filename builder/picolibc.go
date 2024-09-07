@@ -8,9 +8,9 @@ import (
 	"github.com/tinygo-org/tinygo/goenv"
 )
 
-// Picolibc is a C library for bare metal embedded devices. It was originally
+// libPicolibc is a C library for bare metal embedded devices. It was originally
 // based on newlib.
-var Picolibc = Library{
+var libPicolibc = Library{
 	name: "picolibc",
 	makeHeaders: func(target, includeDir string) error {
 		f, err := os.Create(filepath.Join(includeDir, "picolibc.h"))
@@ -29,6 +29,7 @@ var Picolibc = Library{
 			"-D_HAVE_ALIAS_ATTRIBUTE",
 			"-DTINY_STDIO",
 			"-DPOSIX_IO",
+			"-DFORMAT_DEFAULT_INTEGER", // use __i_vfprintf and __i_vfscanf by default
 			"-D_IEEE_LIBM",
 			"-D__OBSOLETE_MATH_FLOAT=1", // use old math code that doesn't expect a FPU
 			"-D__OBSOLETE_MATH_DOUBLE=0",

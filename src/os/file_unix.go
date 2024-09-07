@@ -1,4 +1,4 @@
-//go:build darwin || (linux && !baremetal) || wasip1
+//go:build darwin || (linux && !baremetal && !wasm_unknown) || wasip1 || wasip2
 
 // target wasi sets GOOS=linux and thus the +linux build tag,
 // even though it doesn't show up in "tinygo info target -wasi"
@@ -53,6 +53,19 @@ func (f *file) close() (err error) {
 
 func NewFile(fd uintptr, name string) *File {
 	return &File{&file{handle: unixFileHandle(fd), name: name}}
+}
+
+// Truncate changes the size of the named file.
+// If the file is a symbolic link, it changes the size of the link's target.
+// If there is an error, it will be of type *PathError.
+func Truncate(name string, size int64) error {
+	e := ignoringEINTR(func() error {
+		return syscall.Truncate(name, size)
+	})
+	if e != nil {
+		return &PathError{Op: "truncate", Path: name, Err: e}
+	}
+	return nil
 }
 
 func Pipe() (r *File, w *File, err error) {
@@ -123,6 +136,18 @@ func Readlink(name string) (string, error) {
 			return string(b[0:n]), nil
 		}
 	}
+}
+
+// Truncate changes the size of the file.
+// It does not change the I/O offset.
+// If there is an error, it will be of type *PathError.
+// Alternatively just use 'raw' syscall by file name
+func (f *File) Truncate(size int64) (err error) {
+	if f.handle == nil {
+		return ErrClosed
+	}
+
+	return Truncate(f.name, size)
 }
 
 // ReadAt reads up to len(b) bytes from the File starting at the given absolute offset.

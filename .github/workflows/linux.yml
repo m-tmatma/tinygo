@@ -15,7 +15,7 @@ jobs:
     # statically linked binary.
     runs-on: ubuntu-latest
     container:
-      image: golang:1.22-alpine
+      image: golang:1.23-alpine
     steps:
       - name: Install apk dependencies
         # tar: needed for actions/cache@v4
@@ -65,7 +65,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-18-linux-alpine-v1
+          key: llvm-build-18-linux-alpine-v2
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'
@@ -112,6 +112,8 @@ jobs:
           gem install --no-document fpm
       - name: Run linter
         run: make lint
+      - name: Run spellcheck
+        run: make spell
       - name: Build TinyGo release
         run: |
           make release deb -j3 STATIC=1
@@ -131,17 +133,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: true
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
           cache: true
       - name: Install wasmtime
-        run: |
-          mkdir -p $HOME/.wasmtime $HOME/.wasmtime/bin
-          curl https://github.com/bytecodealliance/wasmtime/releases/download/v14.0.4/wasmtime-v14.0.4-x86_64-linux.tar.xz -o wasmtime-v14.0.4-x86_64-linux.tar.xz -SfL
-          tar -C $HOME/.wasmtime/bin --wildcards -xf wasmtime-v14.0.4-x86_64-linux.tar.xz --strip-components=1 wasmtime-v14.0.4-x86_64-linux/*
-          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+        with:
+          version: "19.0.1"
+      - name: Install wasm-tools
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
       - name: Download release artifact
         uses: actions/download-artifact@v4
         with:
@@ -151,8 +155,8 @@ jobs:
           mkdir -p ~/lib
           tar -C ~/lib -xf tinygo.linux-amd64.tar.gz
           ln -s ~/lib/tinygo/bin/tinygo ~/go/bin/tinygo
-      - run: make tinygo-test-wasi-fast
       - run: make tinygo-test-wasip1-fast
+      - run: make tinygo-test-wasip2-fast
       - run: make smoketest
   assert-test-linux:
     # Run all tests that can run on Linux, with LLVM assertions enabled to catch
@@ -177,18 +181,18 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
           cache: true
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
       - name: Install wasmtime
-        run: |
-          mkdir -p $HOME/.wasmtime $HOME/.wasmtime/bin
-          curl -L https://github.com/bytecodealliance/wasmtime/releases/download/v14.0.4/wasmtime-v14.0.4-x86_64-linux.tar.xz -o wasmtime-v14.0.4-x86_64-linux.tar.xz -SfL
-          tar -C $HOME/.wasmtime/bin --wildcards -xf wasmtime-v14.0.4-x86_64-linux.tar.xz --strip-components=1 wasmtime-v14.0.4-x86_64-linux/*
-          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+        uses: bytecodealliance/actions/wasmtime/setup@v1
+        with:
+          version: "19.0.1"
+      - name: Setup `wasm-tools`
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
       - name: Restore LLVM source cache
         uses: actions/cache/restore@v4
         id: cache-llvm-source
@@ -218,7 +222,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-18-linux-asserts-v1
+          key: llvm-build-18-linux-asserts-v2
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'
@@ -300,7 +304,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.23'
           cache: true
       - name: Restore LLVM source cache
         uses: actions/cache/restore@v4
@@ -331,7 +335,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-18-linux-${{ matrix.goarch }}-v1
+          key: llvm-build-18-linux-${{ matrix.goarch }}-v2
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'

@@ -23,6 +23,7 @@ type Options struct {
 	GOOS            string // environment variable
 	GOARCH          string // environment variable
 	GOARM           string // environment variable (only used with GOARCH=arm)
+	GOMIPS          string // environment variable (only used with GOARCH=mips and GOARCH=mipsle)
 	Directory       string // working dir, leave it unset to use the current working dir
 	Target          string
 	Opt             string
@@ -53,6 +54,8 @@ type Options struct {
 	Monitor         bool
 	BaudRate        int
 	Timeout         time.Duration
+	WITPackage      string // pass through to wasm-tools component embed invocation
+	WITWorld        string // pass through to wasm-tools component embed -w option
 }
 
 // Verify performs a validation on the given options, raising an error if options are not valid.

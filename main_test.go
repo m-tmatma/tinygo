@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -24,6 +23,7 @@ import (
 	"github.com/aykevl/go-wasm"
 	"github.com/tinygo-org/tinygo/builder"
 	"github.com/tinygo-org/tinygo/compileopts"
+	"github.com/tinygo-org/tinygo/diagnostics"
 	"github.com/tinygo-org/tinygo/goenv"
 )
 
@@ -36,6 +36,7 @@ var supportedLinuxArches = map[string]string{
 	"X86Linux":   "linux/386",
 	"ARMLinux":   "linux/arm/6",
 	"ARM64Linux": "linux/arm64",
+	"MIPSLinux":  "linux/mipsle/hardfloat",
 	"WASIp1":     "wasip1/wasm",
 }
 
@@ -95,6 +96,9 @@ func TestBuild(t *testing.T) {
 	}
 	if minor >= 22 {
 		tests = append(tests, "go1.22/")
+	}
+	if minor >= 23 {
+		tests = append(tests, "go1.23/")
 	}
 
 	if *testTarget != "" {
@@ -181,6 +185,10 @@ func TestBuild(t *testing.T) {
 			t.Parallel()
 			runPlatTests(optionsFromTarget("wasip1", sema), tests, t)
 		})
+		t.Run("WASIp2", func(t *testing.T) {
+			t.Parallel()
+			runPlatTests(optionsFromTarget("wasip2", sema), tests, t)
+		})
 	}
 }
 
@@ -203,6 +211,12 @@ func runPlatTests(options compileopts.Options, tests []string, t *testing.T) {
 			case "timers.go":
 				// Timer tests do not work because syscall.seek is implemented
 				// as Assembly in mainline Go and causes linker failure
+				continue
+			}
+		}
+		if options.GOOS == "linux" && (options.GOARCH == "mips" || options.GOARCH == "mipsle") {
+			if name == "atomic.go" || name == "timers.go" {
+				// 64-bit atomic operations aren't currently supported on MIPS.
 				continue
 			}
 		}
@@ -232,9 +246,22 @@ func runPlatTests(options compileopts.Options, tests []string, t *testing.T) {
 				// some compiler changes).
 				continue
 
+			case "timers.go":
+				// Crashes starting with Go 1.23.
+				// Bug: https://github.com/llvm/llvm-project/issues/104032
+				continue
+
 			default:
 			}
 		}
+		if options.Target == "wasip2" {
+			switch name {
+			case "cgo/":
+				// waisp2 use our own libc; cgo tests fail
+				continue
+			}
+		}
+
 		name := name // redefine to avoid race condition
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -297,11 +324,16 @@ func emuCheck(t *testing.T, options compileopts.Options) {
 }
 
 func optionsFromTarget(target string, sema chan struct{}) compileopts.Options {
+	separators := strings.Count(target, "/")
+	if (separators == 1 || separators == 2) && !strings.HasSuffix(target, ".json") {
+		return optionsFromOSARCH(target, sema)
+	}
 	return compileopts.Options{
 		// GOOS/GOARCH are only used if target == ""
 		GOOS:          goenv.Get("GOOS"),
 		GOARCH:        goenv.Get("GOARCH"),
 		GOARM:         goenv.Get("GOARM"),
+		GOMIPS:        goenv.Get("GOMIPS"),
 		Target:        target,
 		Semaphore:     sema,
 		InterpTimeout: 180 * time.Second,
@@ -325,8 +357,11 @@ func optionsFromOSARCH(osarch string, sema chan struct{}) compileopts.Options {
 		VerifyIR:      true,
 		Opt:           "z",
 	}
-	if options.GOARCH == "arm" {
+	switch options.GOARCH {
+	case "arm":
 		options.GOARM = parts[2]
+	case "mips", "mipsle":
+		options.GOMIPS = parts[2]
 	}
 	return options
 }
@@ -364,7 +399,11 @@ func runTestWithConfig(name string, t *testing.T, options compileopts.Options, c
 		return cmd.Run()
 	})
 	if err != nil {
-		printCompilerError(t.Log, err)
+		w := &bytes.Buffer{}
+		diagnostics.CreateDiagnostics(err).WriteTo(w, "")
+		for _, line := range strings.Split(strings.TrimRight(w.String(), "\n"), "\n") {
+			t.Log(line)
+		}
 		t.Fail()
 		return
 	}
@@ -393,6 +432,7 @@ func runTestWithConfig(name string, t *testing.T, options compileopts.Options, c
 		fail = true
 	} else if !bytes.Equal(expected, actual) {
 		t.Logf("output did not match (expected %d bytes, got %d bytes):", len(expected), len(actual))
+		t.Logf(string(Diff("expected", expected, "actual", actual)))
 		fail = true
 	}
 
@@ -667,7 +707,8 @@ func TestMain(m *testing.M) {
 			// Invoke a specific tool.
 			err := builder.RunTool(os.Args[1], os.Args[2:]...)
 			if err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				// The tool should have printed an error message already.
+				// Don't print another error message here.
 				os.Exit(1)
 			}
 			os.Exit(0)

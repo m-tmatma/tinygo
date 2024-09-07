@@ -1,4 +1,4 @@
-//go:build linux && !baremetal && !nintendoswitch && !wasip1 && !wasm_unknown
+//go:build linux && !baremetal && !nintendoswitch && !wasip1 && !wasm_unknown && !wasip2
 
 package runtime
 
@@ -14,13 +14,19 @@ const (
 	flag_PROT_READ     = 0x1
 	flag_PROT_WRITE    = 0x2
 	flag_MAP_PRIVATE   = 0x2
-	flag_MAP_ANONYMOUS = 0x20
+	flag_MAP_ANONYMOUS = linux_MAP_ANONYMOUS // different on alpha, hppa, mips, xtensa
 )
 
 // Source: https://github.com/torvalds/linux/blob/master/include/uapi/linux/time.h
 const (
 	clock_REALTIME      = 0
 	clock_MONOTONIC_RAW = 4
+)
+
+const (
+	sig_SIGBUS  = linux_SIGBUS
+	sig_SIGILL  = linux_SIGILL
+	sig_SIGSEGV = linux_SIGSEGV
 )
 
 // For the definition of the various header structs, see:

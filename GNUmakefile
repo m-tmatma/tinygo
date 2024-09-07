@@ -175,17 +175,17 @@ ifneq ("$(wildcard $(LLVM_BUILDDIR)/bin/llvm-config*)","")
     CGO_LDFLAGS+=-L$(abspath $(LLVM_BUILDDIR)/lib) -lclang $(CLANG_LIBS) $(LLD_LIBS) $(shell $(LLVM_CONFIG_PREFIX) $(LLVM_BUILDDIR)/bin/llvm-config --ldflags --libs --system-libs $(LLVM_COMPONENTS)) -lstdc++ $(CGO_LDFLAGS_EXTRA)
 endif
 
-clean:
+clean: ## Remove build directory
 	@rm -rf build
 
 FMT_PATHS = ./*.go builder cgo/*.go compiler interp loader src transform
-fmt:
+fmt: ## Reformat source
 	@gofmt -l -w $(FMT_PATHS)
-fmt-check:
+fmt-check: ## Warn if any source needs reformatting
 	@unformatted=$$(gofmt -l $(FMT_PATHS)); [ -z "$$unformatted" ] && exit 0; echo "Unformatted:"; for fn in $$unformatted; do echo "  $$fn"; done; exit 1
 
 
-gen-device: gen-device-avr gen-device-esp gen-device-nrf gen-device-sam gen-device-sifive gen-device-kendryte gen-device-nxp gen-device-rp
+gen-device: gen-device-avr gen-device-esp gen-device-nrf gen-device-sam gen-device-sifive gen-device-kendryte gen-device-nxp gen-device-rp ## Generate microcontroller-specific sources
 ifneq ($(STM32), 0)
 gen-device: gen-device-stm32
 endif
@@ -237,18 +237,16 @@ gen-device-renesas: build/gen-device-svd
 	./build/gen-device-svd -source=https://github.com/tinygo-org/renesas-svd lib/renesas-svd/ src/device/renesas/
 	GO111MODULE=off $(GO) fmt ./src/device/renesas
 
-# Get LLVM sources.
 $(LLVM_PROJECTDIR)/llvm:
 	git clone -b tinygo_xtensa_release_18.1.2 --depth=1 https://github.com/tinygo-org/llvm-project $(LLVM_PROJECTDIR)
-llvm-source: $(LLVM_PROJECTDIR)/llvm
+llvm-source: $(LLVM_PROJECTDIR)/llvm ## Get LLVM sources
 
 # Configure LLVM.
 TINYGO_SOURCE_DIR=$(shell pwd)
 $(LLVM_BUILDDIR)/build.ninja:
-	mkdir -p $(LLVM_BUILDDIR) && cd $(LLVM_BUILDDIR) && cmake -G Ninja $(TINYGO_SOURCE_DIR)/$(LLVM_PROJECTDIR)/llvm "-DLLVM_TARGETS_TO_BUILD=X86;ARM;AArch64;RISCV;WebAssembly" "-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=AVR;Xtensa" -DCMAKE_BUILD_TYPE=Release -DLIBCLANG_BUILD_STATIC=ON -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_Z3_SOLVER=OFF -DLLVM_ENABLE_OCAMLDOC=OFF -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_PROJECTS="clang;lld" -DLLVM_TOOL_CLANG_TOOLS_EXTRA_BUILD=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_ARCMT=OFF $(LLVM_OPTION)
+	mkdir -p $(LLVM_BUILDDIR) && cd $(LLVM_BUILDDIR) && cmake -G Ninja $(TINYGO_SOURCE_DIR)/$(LLVM_PROJECTDIR)/llvm "-DLLVM_TARGETS_TO_BUILD=X86;ARM;AArch64;AVR;Mips;RISCV;WebAssembly" "-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=Xtensa" -DCMAKE_BUILD_TYPE=Release -DLIBCLANG_BUILD_STATIC=ON -DLLVM_ENABLE_TERMINFO=OFF -DLLVM_ENABLE_ZLIB=OFF -DLLVM_ENABLE_ZSTD=OFF -DLLVM_ENABLE_LIBEDIT=OFF -DLLVM_ENABLE_Z3_SOLVER=OFF -DLLVM_ENABLE_OCAMLDOC=OFF -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_ENABLE_PROJECTS="clang;lld" -DLLVM_TOOL_CLANG_TOOLS_EXTRA_BUILD=OFF -DCLANG_ENABLE_STATIC_ANALYZER=OFF -DCLANG_ENABLE_ARCMT=OFF $(LLVM_OPTION)
 
-# Build LLVM.
-$(LLVM_BUILDDIR): $(LLVM_BUILDDIR)/build.ninja
+$(LLVM_BUILDDIR): $(LLVM_BUILDDIR)/build.ninja ## Build LLVM
 	cd $(LLVM_BUILDDIR) && ninja $(NINJA_BUILD_TARGETS)
 
 ifneq ($(USE_SYSTEM_BINARYEN),1)
@@ -257,7 +255,7 @@ ifneq ($(USE_SYSTEM_BINARYEN),1)
 binaryen: build/wasm-opt$(EXE)
 build/wasm-opt$(EXE):
 	mkdir -p build
-	cd lib/binaryen && cmake -G Ninja . -DBUILD_STATIC_LIB=ON -DBUILD_TESTS=OFF $(BINARYEN_OPTION) && ninja bin/wasm-opt$(EXE)
+	cd lib/binaryen && cmake -G Ninja . -DBUILD_STATIC_LIB=ON -DBUILD_TESTS=OFF -DENABLE_WERROR=OFF $(BINARYEN_OPTION) && ninja bin/wasm-opt$(EXE)
 	cp lib/binaryen/bin/wasm-opt$(EXE) build/wasm-opt$(EXE)
 endif
 
@@ -267,6 +265,18 @@ wasi-libc: lib/wasi-libc/sysroot/lib/wasm32-wasi/libc.a
 lib/wasi-libc/sysroot/lib/wasm32-wasi/libc.a:
 	@if [ ! -e lib/wasi-libc/Makefile ]; then echo "Submodules have not been downloaded. Please download them using:\n  git submodule update --init"; exit 1; fi
 	cd lib/wasi-libc && $(MAKE) -j4 EXTRA_CFLAGS="-O2 -g -DNDEBUG -mnontrapping-fptoint -msign-ext" MALLOC_IMPL=none CC="$(CLANG)" AR=$(LLVM_AR) NM=$(LLVM_NM)
+
+# Generate WASI syscall bindings
+WASM_TOOLS_MODULE=github.com/ydnar/wasm-tools-go
+.PHONY: wasi-syscall
+wasi-syscall: wasi-cm
+	go run -modfile ./internal/wasm-tools/go.mod $(WASM_TOOLS_MODULE)/cmd/wit-bindgen-go generate --versioned -o ./src/internal -p internal --cm internal/cm ./lib/wasi-cli/wit
+
+# Copy package cm into src/internal/cm
+.PHONY: wasi-cm
+wasi-cm:
+	# rm -rf ./src/internal/cm
+	rsync -rv --delete --exclude '*_test.go' $(shell go list -modfile ./internal/wasm-tools/go.mod -m -f {{.Dir}} $(WASM_TOOLS_MODULE))/cm ./src/internal/
 
 # Check for Node.js used during WASM tests.
 NODEJS_VERSION := $(word 1,$(subst ., ,$(shell node -v | cut -c 2-)))
@@ -279,8 +289,7 @@ ifeq (, $(shell which node))
 endif
 	@if [ $(NODEJS_VERSION) -lt $(MIN_NODEJS_VERSION) ]; then echo "Install NodeJS version 18+ to run tests."; exit 1; fi
 
-# Build the Go compiler.
-tinygo:
+tinygo: ## Build the TinyGo compiler
 	@if [ ! -f "$(LLVM_BUILDDIR)/bin/llvm-config" ]; then echo "Fetch and build LLVM first by running:"; echo "  $(MAKE) llvm-source"; echo "  $(MAKE) $(LLVM_BUILDDIR)"; exit 1; fi
 	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GOENVFLAGS) $(GO) build -buildmode exe -o build/tinygo$(EXE) -tags "byollvm osusergo" -ldflags="-X github.com/tinygo-org/tinygo/goenv.GitSha1=`git rev-parse --short HEAD`" .
 test: wasi-libc check-nodejs-version
@@ -335,6 +344,7 @@ TEST_PACKAGES_FAST = \
 	unicode \
 	unicode/utf16 \
 	unicode/utf8 \
+	unique \
 	$(nil)
 
 # Assume this will go away before Go2, so only check minor version.
@@ -349,18 +359,17 @@ endif
 # compress/flate appears to hang on wasi
 # crypto/hmac fails on wasi, it exits with a "slice out of range" panic
 # debug/plan9obj requires os.ReadAt, which is not yet supported on windows
-# image requires recover(), which is not  yet supported on wasi
+# image requires recover(), which is not yet supported on wasi
 # io/ioutil requires os.ReadDir, which is not yet supported on windows or wasi
 # mime/quotedprintable requires syscall.Faccessat
 # strconv requires recover() which is not yet supported on wasi
-# text/tabwriter requries recover(), which is not  yet supported on wasi
+# text/tabwriter requires recover(), which is not yet supported on wasi
 # text/template/parse requires recover(), which is not yet supported on wasi
 # testing/fstest requires os.ReadDir, which is not yet supported on windows or wasi
 
 # Additional standard library packages that pass tests on individual platforms
 TEST_PACKAGES_LINUX := \
 	archive/zip \
-	bytes \
 	compress/flate \
 	crypto/hmac \
 	debug/dwarf \
@@ -369,8 +378,8 @@ TEST_PACKAGES_LINUX := \
 	io/ioutil \
 	mime/quotedprintable \
 	net \
+	os/user \
 	strconv \
-	testing/fstest \
 	text/tabwriter \
 	text/template/parse
 
@@ -379,6 +388,7 @@ TEST_PACKAGES_DARWIN := $(TEST_PACKAGES_LINUX)
 TEST_PACKAGES_WINDOWS := \
 	compress/flate \
 	crypto/hmac \
+	os/user \
 	strconv \
 	text/template/parse \
 	$(nil)
@@ -430,14 +440,35 @@ tinygo-test-wasi:
 	$(TINYGO) test -target wasip1 $(TEST_PACKAGES_FAST) $(TEST_PACKAGES_SLOW) ./tests/runtime_wasi
 tinygo-test-wasip1:
 	GOOS=wasip1 GOARCH=wasm $(TINYGO) test $(TEST_PACKAGES_FAST) $(TEST_PACKAGES_SLOW) ./tests/runtime_wasi
-tinygo-test-wasi-fast:
-	$(TINYGO) test -target wasip1 $(TEST_PACKAGES_FAST) ./tests/runtime_wasi
 tinygo-test-wasip1-fast:
-	GOOS=wasip1 GOARCH=wasm $(TINYGO) test $(TEST_PACKAGES_FAST) ./tests/runtime_wasi
-tinygo-bench-wasi:
+	$(TINYGO) test -target=wasip1 $(TEST_PACKAGES_FAST) ./tests/runtime_wasi
+
+tinygo-test-wasip2-slow:
+	$(TINYGO) test -target=wasip2 $(TEST_PACKAGES_SLOW)
+tinygo-test-wasip2-fast:
+	$(TINYGO) test -target=wasip2 $(TEST_PACKAGES_FAST) ./tests/runtime_wasi
+
+tinygo-test-wasip2-sum-slow:
+	TINYGO=$(TINYGO) \
+	TARGET=wasip2 \
+	TESTOPTS="-x -work" \
+	PACKAGES="$(TEST_PACKAGES_SLOW)" \
+	gotestsum --raw-command -- ./tools/tgtestjson.sh
+tinygo-test-wasip2-sum-fast:
+	TINYGO=$(TINYGO) \
+	TARGET=wasip2 \
+	TESTOPTS="-x -work" \
+	PACKAGES="$(TEST_PACKAGES_FAST)" \
+	gotestsum --raw-command -- ./tools/tgtestjson.sh
+tinygo-bench-wasip1:
 	$(TINYGO) test -target wasip1 -bench . $(TEST_PACKAGES_FAST) $(TEST_PACKAGES_SLOW)
-tinygo-bench-wasi-fast:
+tinygo-bench-wasip1-fast:
 	$(TINYGO) test -target wasip1 -bench . $(TEST_PACKAGES_FAST)
+
+tinygo-bench-wasip2:
+	$(TINYGO) test -target wasip2 -bench . $(TEST_PACKAGES_FAST) $(TEST_PACKAGES_SLOW)
+tinygo-bench-wasip2-fast:
+	$(TINYGO) test -target wasip2 -bench . $(TEST_PACKAGES_FAST)
 
 # Test external packages in a large corpus.
 test-corpus:
@@ -802,6 +833,7 @@ endif
 	$(TINYGO) build -size short -o test.hex -target=pca10040 -opt=0     ./testdata/stdlib.go
 	@$(MD5SUM) test.hex
 	GOOS=linux GOARCH=arm $(TINYGO) build -size short -o test.elf       ./testdata/cgo
+	GOOS=linux GOARCH=mips    $(TINYGO) build -size short -o test.elf   ./testdata/cgo
 	GOOS=windows GOARCH=amd64 $(TINYGO) build -size short -o test.exe   ./testdata/cgo
 	GOOS=windows GOARCH=arm64 $(TINYGO) build -size short -o test.exe   ./testdata/cgo
 	GOOS=darwin GOARCH=amd64 $(TINYGO) build  -size short -o test       ./testdata/cgo
@@ -822,6 +854,7 @@ build/release: tinygo gen-device wasi-libc $(if $(filter 1,$(USE_SYSTEM_BINARYEN
 	@mkdir -p build/release/tinygo/lib/CMSIS/CMSIS
 	@mkdir -p build/release/tinygo/lib/macos-minimal-sdk
 	@mkdir -p build/release/tinygo/lib/mingw-w64/mingw-w64-crt/lib-common
+	@mkdir -p build/release/tinygo/lib/mingw-w64/mingw-w64-crt/stdio
 	@mkdir -p build/release/tinygo/lib/mingw-w64/mingw-w64-headers/defaults
 	@mkdir -p build/release/tinygo/lib/musl/arch
 	@mkdir -p build/release/tinygo/lib/musl/crt
@@ -832,9 +865,7 @@ build/release: tinygo gen-device wasi-libc $(if $(filter 1,$(USE_SYSTEM_BINARYEN
 	@mkdir -p build/release/tinygo/lib/wasi-libc/libc-bottom-half/headers
 	@mkdir -p build/release/tinygo/lib/wasi-libc/libc-top-half/musl/arch
 	@mkdir -p build/release/tinygo/lib/wasi-libc/libc-top-half/musl/src
-	@mkdir -p build/release/tinygo/pkg/thumbv6m-unknown-unknown-eabi-cortex-m0
-	@mkdir -p build/release/tinygo/pkg/thumbv6m-unknown-unknown-eabi-cortex-m0plus
-	@mkdir -p build/release/tinygo/pkg/thumbv7em-unknown-unknown-eabi-cortex-m4
+	@mkdir -p build/release/tinygo/lib/wasi-cli/
 	@echo copying source files
 	@cp -p  build/tinygo$(EXE)           build/release/tinygo/bin
 ifneq ($(USE_SYSTEM_BINARYEN),1)
@@ -848,6 +879,7 @@ endif
 	@cp -rp lib/musl/arch/arm            build/release/tinygo/lib/musl/arch
 	@cp -rp lib/musl/arch/generic        build/release/tinygo/lib/musl/arch
 	@cp -rp lib/musl/arch/i386           build/release/tinygo/lib/musl/arch
+	@cp -rp lib/musl/arch/mips           build/release/tinygo/lib/musl/arch
 	@cp -rp lib/musl/arch/x86_64         build/release/tinygo/lib/musl/arch
 	@cp -rp lib/musl/crt/crt1.c          build/release/tinygo/lib/musl/crt
 	@cp -rp lib/musl/COPYRIGHT           build/release/tinygo/lib/musl
@@ -858,10 +890,12 @@ endif
 	@cp -rp lib/musl/src/include         build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/internal        build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/legacy          build/release/tinygo/lib/musl/src
+	@cp -rp lib/musl/src/locale          build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/linux           build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/malloc          build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/mman            build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/math            build/release/tinygo/lib/musl/src
+	@cp -rp lib/musl/src/multibyte       build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/signal          build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/stdio           build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/string          build/release/tinygo/lib/musl/src
@@ -871,6 +905,7 @@ endif
 	@cp -rp lib/mingw-w64/mingw-w64-crt/def-include                 build/release/tinygo/lib/mingw-w64/mingw-w64-crt
 	@cp -rp lib/mingw-w64/mingw-w64-crt/lib-common/api-ms-win-crt-* build/release/tinygo/lib/mingw-w64/mingw-w64-crt/lib-common
 	@cp -rp lib/mingw-w64/mingw-w64-crt/lib-common/kernel32.def.in  build/release/tinygo/lib/mingw-w64/mingw-w64-crt/lib-common
+	@cp -rp lib/mingw-w64/mingw-w64-crt/stdio/ucrt_*                build/release/tinygo/lib/mingw-w64/mingw-w64-crt/stdio
 	@cp -rp lib/mingw-w64/mingw-w64-headers/crt/                    build/release/tinygo/lib/mingw-w64/mingw-w64-headers
 	@cp -rp lib/mingw-w64/mingw-w64-headers/defaults/include        build/release/tinygo/lib/mingw-w64/mingw-w64-headers/defaults
 	@cp -rp lib/nrfx/*                   build/release/tinygo/lib/nrfx
@@ -891,16 +926,11 @@ endif
 	@cp -rp lib/wasi-libc/libc-top-half/musl/src/string             build/release/tinygo/lib/wasi-libc/libc-top-half/musl/src
 	@cp -rp lib/wasi-libc/libc-top-half/musl/include                build/release/tinygo/lib/wasi-libc/libc-top-half/musl
 	@cp -rp lib/wasi-libc/sysroot                                   build/release/tinygo/lib/wasi-libc/sysroot
+	@cp -rp lib/wasi-cli/wit                                        build/release/tinygo/lib/wasi-cli/wit
 	@cp -rp llvm-project/compiler-rt/lib/builtins build/release/tinygo/lib/compiler-rt-builtins
 	@cp -rp llvm-project/compiler-rt/LICENSE.TXT  build/release/tinygo/lib/compiler-rt-builtins
 	@cp -rp src                          build/release/tinygo/src
 	@cp -rp targets                      build/release/tinygo/targets
-	./build/release/tinygo/bin/tinygo build-library -target=cortex-m0     -o build/release/tinygo/pkg/thumbv6m-unknown-unknown-eabi-cortex-m0/compiler-rt     compiler-rt
-	./build/release/tinygo/bin/tinygo build-library -target=cortex-m0plus -o build/release/tinygo/pkg/thumbv6m-unknown-unknown-eabi-cortex-m0plus/compiler-rt compiler-rt
-	./build/release/tinygo/bin/tinygo build-library -target=cortex-m4     -o build/release/tinygo/pkg/thumbv7em-unknown-unknown-eabi-cortex-m4/compiler-rt    compiler-rt
-	./build/release/tinygo/bin/tinygo build-library -target=cortex-m0     -o build/release/tinygo/pkg/thumbv6m-unknown-unknown-eabi-cortex-m0/picolibc     picolibc
-	./build/release/tinygo/bin/tinygo build-library -target=cortex-m0plus -o build/release/tinygo/pkg/thumbv6m-unknown-unknown-eabi-cortex-m0plus/picolibc picolibc
-	./build/release/tinygo/bin/tinygo build-library -target=cortex-m4     -o build/release/tinygo/pkg/thumbv7em-unknown-unknown-eabi-cortex-m4/picolibc    picolibc
 
 release:
 	tar -czf build/release.tar.gz -C build/release tinygo
@@ -918,14 +948,33 @@ release: build/release
 deb: build/release
 endif
 
-lint:
-	go run github.com/mgechev/revive -version
+.PHONY: tools
+tools:
+	cd internal/tools && go generate -tags tools ./
+
+.PHONY: lint
+lint: tools ## Lint source tree
+	revive -version
 	# TODO: lint more directories!
 	# revive.toml isn't flexible enough to filter out just one kind of error from a checker, so do it with grep here.
 	# Can't use grep with friendly formatter.  Plain output isn't too bad, though.
 	# Use 'grep .' to get rid of stray blank line
-	go run github.com/mgechev/revive -config revive.toml compiler/... src/{os,reflect}/*.go | grep -v "should have comment or be unexported" | grep '.' | awk '{print}; END {exit NR>0}'
+	revive -config revive.toml compiler/... src/{os,reflect}/*.go | grep -v "should have comment or be unexported" | grep '.' | awk '{print}; END {exit NR>0}'
 
-spell:
-	# Check for typos in comments.  Skip git submodules etc.
-	go run github.com/client9/misspell/cmd/misspell -i 'ackward,devided,extint,inbetween,programmmer,rela' $$( find . -depth 1 -type d  | egrep -w -v 'lib|llvm|src/net' )
+SPELLDIRSCMD=find . -depth 1 -type d  | egrep -wv '.git|lib|llvm|src'; find src -depth 1 | egrep -wv 'device|internal|net|vendor'; find src/internal -depth 1 -type d | egrep -wv src/internal/wasi
+.PHONY: spell
+spell: tools ## Spellcheck source tree
+	misspell -error --dict misspell.csv -i 'ackward,devided,extint,rela' $$( $(SPELLDIRSCMD) ) *.go *.md
+
+.PHONY: spellfix
+spellfix: tools ## Same as spell, but fixes what it finds
+	misspell -w --dict misspell.csv -i 'ackward,devided,extint,rela' $$( $(SPELLDIRSCMD) ) *.go *.md
+
+# https://www.client9.com/self-documenting-makefiles/
+.PHONY: help
+help:
+	@awk -F ':|##' '/^[^\t].+?:.*?##/ {\
+	gsub(/\$$\(LLVM_BUILDDIR\)/, "$(LLVM_BUILDDIR)"); \
+        printf "\033[36m%-30s\033[0m %s\n", $$1, $$NF \
+        }' $(MAKEFILE_LIST)
+#.DEFAULT_GOAL=help

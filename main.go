@@ -8,8 +8,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"go/scanner"
-	"go/types"
 	"io"
 	"os"
 	"os/exec"
@@ -30,8 +28,8 @@ import (
 	"github.com/mattn/go-colorable"
 	"github.com/tinygo-org/tinygo/builder"
 	"github.com/tinygo-org/tinygo/compileopts"
+	"github.com/tinygo-org/tinygo/diagnostics"
 	"github.com/tinygo-org/tinygo/goenv"
-	"github.com/tinygo-org/tinygo/interp"
 	"github.com/tinygo-org/tinygo/loader"
 	"golang.org/x/tools/go/buildutil"
 	"tinygo.org/x/go-llvm"
@@ -306,16 +304,25 @@ func Test(pkgName string, stdout, stderr io.Writer, options *compileopts.Options
 			// reads any files.
 			//
 			// Ex. run --dir=.. --dir=../.. --dir=../../..
-			dirs := dirsToModuleRoot(result.MainDir, result.ModuleRoot)
+			var dirs []string
+			switch config.Options.Target {
+			case "wasip1":
+				dirs = dirsToModuleRootRel(result.MainDir, result.ModuleRoot)
+			case "wasip2":
+				dirs = dirsToModuleRootAbs(result.MainDir, result.ModuleRoot)
+			default:
+				return fmt.Errorf("unknown GOOS target: %v", config.Options.Target)
+			}
+
 			args := []string{"run"}
-			for _, d := range dirs[1:] {
+			for _, d := range dirs {
 				args = append(args, "--dir="+d)
 			}
 
-			// The below re-organizes the arguments so that the current
-			// directory is added last.
+			args = append(args, "--env=PWD="+cmd.Dir)
+
 			args = append(args, cmd.Args[1:]...)
-			cmd.Args = append(cmd.Args[:1:1], args...)
+			cmd.Args = args
 		}
 
 		// Run the test.
@@ -338,6 +345,11 @@ func Test(pkgName string, stdout, stderr io.Writer, options *compileopts.Options
 		}
 		return err
 	})
+
+	if testConfig.CompileOnly {
+		return true, nil
+	}
+
 	importPath := strings.TrimSuffix(result.ImportPath, ".test")
 
 	var w io.Writer = stdout
@@ -348,7 +360,7 @@ func Test(pkgName string, stdout, stderr io.Writer, options *compileopts.Options
 		fmt.Fprintf(w, "?   \t%s\t[no test files]\n", err.ImportPath)
 		// Pretend the test passed - it at least didn't fail.
 		return true, nil
-	} else if passed && !testConfig.CompileOnly {
+	} else if passed {
 		fmt.Fprintf(w, "ok  \t%s\t%.3fs\n", importPath, duration.Seconds())
 	} else {
 		fmt.Fprintf(w, "FAIL\t%s\t%.3fs\n", importPath, duration.Seconds())
@@ -356,9 +368,23 @@ func Test(pkgName string, stdout, stderr io.Writer, options *compileopts.Options
 	return passed, err
 }
 
-func dirsToModuleRoot(maindir, modroot string) []string {
-	var dirs = []string{"."}
+func dirsToModuleRootRel(maindir, modroot string) []string {
+	var dirs []string
 	last := ".."
+	// strip off path elements until we hit the module root
+	// adding `..`, `../..`, `../../..` until we're done
+	for maindir != modroot {
+		dirs = append(dirs, last)
+		last = filepath.Join(last, "..")
+		maindir = filepath.Dir(maindir)
+	}
+	dirs = append(dirs, ".")
+	return dirs
+}
+
+func dirsToModuleRootAbs(maindir, modroot string) []string {
+	var dirs = []string{maindir}
+	last := filepath.Join(maindir, "..")
 	// strip off path elements until we hit the module root
 	// adding `..`, `../..`, `../../..` until we're done
 	for maindir != modroot {
@@ -782,9 +808,12 @@ func Run(pkgName string, options *compileopts.Options, cmdArgs []string) error {
 
 // buildAndRun builds and runs the given program, writing output to stdout and
 // errors to os.Stderr. It takes care of emulators (qemu, wasmtime, etc) and
-// passes command line arguments and evironment variables in a way appropriate
+// passes command line arguments and environment variables in a way appropriate
 // for the given emulator.
 func buildAndRun(pkgName string, config *compileopts.Config, stdout io.Writer, cmdArgs, environmentVars []string, timeout time.Duration, run func(cmd *exec.Cmd, result builder.BuildResult) error) (builder.BuildResult, error) {
+
+	isSingleFile := strings.HasSuffix(pkgName, ".go")
+
 	// Determine whether we're on a system that supports environment variables
 	// and command line parameters (operating systems, WASI) or not (baremetal,
 	// WebAssembly in the browser). If we're on a system without an environment,
@@ -818,9 +847,6 @@ func buildAndRun(pkgName string, config *compileopts.Config, stdout io.Writer, c
 			}
 		}
 	} else if config.EmulatorName() == "wasmtime" {
-		// Wasmtime needs some special flags to pass environment variables
-		// and allow reading from the current directory.
-		emuArgs = append(emuArgs, "--dir=.")
 		for _, v := range environmentVars {
 			emuArgs = append(emuArgs, "--env", v)
 		}
@@ -876,7 +902,26 @@ func buildAndRun(pkgName string, config *compileopts.Config, stdout io.Writer, c
 		if err != nil {
 			return result, err
 		}
+
 		name = emulator[0]
+
+		if name == "wasmtime" {
+			// Wasmtime needs some special flags to pass environment variables
+			// and allow reading from the current directory.
+			switch config.Options.Target {
+			case "wasip1":
+				emuArgs = append(emuArgs, "--dir=.")
+			case "wasip2":
+				dir := result.MainDir
+				if isSingleFile {
+					cwd, _ := os.Getwd()
+					dir = cwd
+				}
+				emuArgs = append(emuArgs, "--dir="+dir)
+				emuArgs = append(emuArgs, "--env=PWD="+dir)
+			}
+		}
+
 		emuArgs = append(emuArgs, emulator[1:]...)
 		args = append(emuArgs, args...)
 	}
@@ -891,7 +936,7 @@ func buildAndRun(pkgName string, config *compileopts.Config, stdout io.Writer, c
 
 	// Configure stdout/stderr. The stdout may go to a buffer, not a real
 	// stdout.
-	cmd.Stdout = stdout
+	cmd.Stdout = newOutputWriter(stdout, result.Executable)
 	cmd.Stderr = os.Stderr
 	if config.EmulatorName() == "simavr" {
 		cmd.Stdout = nil // don't print initial load commands
@@ -913,7 +958,7 @@ func buildAndRun(pkgName string, config *compileopts.Config, stdout io.Writer, c
 	err = run(cmd, result)
 	if err != nil {
 		if ctx != nil && ctx.Err() == context.DeadlineExceeded {
-			stdout.Write([]byte(fmt.Sprintf("--- timeout of %s exceeded, terminating...\n", timeout)))
+			fmt.Fprintf(stdout, "--- timeout of %s exceeded, terminating...\n", timeout)
 			err = ctx.Err()
 		}
 		return result, &commandError{"failed to run compiled binary", result.Binary, err}
@@ -1030,7 +1075,8 @@ func findFATMounts(options *compileopts.Options) ([]mountPoint, error) {
 				continue
 			}
 			fstype := fields[2]
-			if fstype != "vfat" {
+			// chromeos bind mounts use 9p
+			if !(fstype == "vfat" || fstype == "9p") {
 				continue
 			}
 			fspath := strings.ReplaceAll(fields[1], "\\040", " ")
@@ -1244,83 +1290,13 @@ func usage(command string) {
 	}
 }
 
-// try to make the path relative to the current working directory. If any error
-// occurs, this error is ignored and the absolute path is returned instead.
-func tryToMakePathRelative(dir string) string {
-	wd, err := os.Getwd()
-	if err != nil {
-		return dir
-	}
-	relpath, err := filepath.Rel(wd, dir)
-	if err != nil {
-		return dir
-	}
-	return relpath
-}
-
-// printCompilerError prints compiler errors using the provided logger function
-// (similar to fmt.Println).
-//
-// There is one exception: interp errors may print to stderr unconditionally due
-// to limitations in the LLVM bindings.
-func printCompilerError(logln func(...interface{}), err error) {
-	switch err := err.(type) {
-	case types.Error:
-		printCompilerError(logln, scanner.Error{
-			Pos: err.Fset.Position(err.Pos),
-			Msg: err.Msg,
-		})
-	case scanner.Error:
-		if !strings.HasPrefix(err.Pos.Filename, filepath.Join(goenv.Get("GOROOT"), "src")) && !strings.HasPrefix(err.Pos.Filename, filepath.Join(goenv.Get("TINYGOROOT"), "src")) {
-			// This file is not from the standard library (either the GOROOT or
-			// the TINYGOROOT). Make the path relative, for easier reading.
-			// Ignore any errors in the process (falling back to the absolute
-			// path).
-			err.Pos.Filename = tryToMakePathRelative(err.Pos.Filename)
-		}
-		logln(err)
-	case scanner.ErrorList:
-		for _, scannerErr := range err {
-			printCompilerError(logln, *scannerErr)
-		}
-	case *interp.Error:
-		logln("#", err.ImportPath)
-		logln(err.Error())
-		if len(err.Inst) != 0 {
-			logln(err.Inst)
-		}
-		if len(err.Traceback) > 0 {
-			logln("\ntraceback:")
-			for _, line := range err.Traceback {
-				logln(line.Pos.String() + ":")
-				logln(line.Inst)
-			}
-		}
-	case loader.Errors:
-		logln("#", err.Pkg.ImportPath)
-		for _, err := range err.Errs {
-			printCompilerError(logln, err)
-		}
-	case loader.Error:
-		logln(err.Err.Error())
-		logln("package", err.ImportStack[0])
-		for _, pkgPath := range err.ImportStack[1:] {
-			logln("\timports", pkgPath)
-		}
-	case *builder.MultiError:
-		for _, err := range err.Errs {
-			printCompilerError(logln, err)
-		}
-	default:
-		logln("error:", err)
-	}
-}
-
 func handleCompilerError(err error) {
 	if err != nil {
-		printCompilerError(func(args ...interface{}) {
-			fmt.Fprintln(os.Stderr, args...)
-		}, err)
+		wd, getwdErr := os.Getwd()
+		if getwdErr != nil {
+			wd = ""
+		}
+		diagnostics.CreateDiagnostics(err).WriteTo(os.Stderr, wd)
 		os.Exit(1)
 	}
 }
@@ -1461,8 +1437,14 @@ func main() {
 		flag.BoolVar(&flagTest, "test", false, "supply -test flag to go list")
 	}
 	var outpath string
-	if command == "help" || command == "build" || command == "build-library" || command == "test" {
+	if command == "help" || command == "build" || command == "test" {
 		flag.StringVar(&outpath, "o", "", "output filename")
+	}
+
+	var witPackage, witWorld string
+	if command == "help" || command == "build" || command == "test" || command == "run" {
+		flag.StringVar(&witPackage, "wit-package", "", "wit package for wasm component embedding")
+		flag.StringVar(&witWorld, "wit-world", "", "wit world for wasm component embedding")
 	}
 
 	var testConfig compileopts.TestConfig
@@ -1485,7 +1467,8 @@ func main() {
 	case "clang", "ld.lld", "wasm-ld":
 		err := builder.RunTool(command, os.Args[2:]...)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			// The tool should have printed an error message already.
+			// Don't print another error message here.
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -1516,6 +1499,7 @@ func main() {
 		GOOS:            goenv.Get("GOOS"),
 		GOARCH:          goenv.Get("GOARCH"),
 		GOARM:           goenv.Get("GOARM"),
+		GOMIPS:          goenv.Get("GOMIPS"),
 		Target:          *target,
 		StackSize:       stackSize,
 		Opt:             *opt,
@@ -1544,6 +1528,8 @@ func main() {
 		Monitor:         *monitor,
 		BaudRate:        *baudrate,
 		Timeout:         *timeout,
+		WITPackage:      witPackage,
+		WITWorld:        witWorld,
 	}
 	if *printCommands {
 		options.PrintCommands = printCommand
@@ -1586,50 +1572,6 @@ func main() {
 
 		err := Build(pkgName, outpath, options)
 		handleCompilerError(err)
-	case "build-library":
-		// Note: this command is only meant to be used while making a release!
-		if outpath == "" {
-			fmt.Fprintln(os.Stderr, "No output filename supplied (-o).")
-			usage(command)
-			os.Exit(1)
-		}
-		if *target == "" {
-			fmt.Fprintln(os.Stderr, "No target (-target).")
-		}
-		if flag.NArg() != 1 {
-			fmt.Fprintf(os.Stderr, "Build-library only accepts exactly one library name as argument, %d given\n", flag.NArg())
-			usage(command)
-			os.Exit(1)
-		}
-		var lib *builder.Library
-		switch name := flag.Arg(0); name {
-		case "compiler-rt":
-			lib = &builder.CompilerRT
-		case "picolibc":
-			lib = &builder.Picolibc
-		default:
-			fmt.Fprintf(os.Stderr, "Unknown library: %s\n", name)
-			os.Exit(1)
-		}
-		tmpdir, err := os.MkdirTemp("", "tinygo*")
-		if err != nil {
-			handleCompilerError(err)
-		}
-		defer os.RemoveAll(tmpdir)
-		spec, err := compileopts.LoadTarget(options)
-		if err != nil {
-			handleCompilerError(err)
-		}
-		config := &compileopts.Config{
-			Options: options,
-			Target:  spec,
-		}
-		path, err := lib.Load(config, tmpdir)
-		handleCompilerError(err)
-		err = copyFile(path, outpath)
-		if err != nil {
-			handleCompilerError(err)
-		}
 	case "flash", "gdb", "lldb":
 		pkgName := filepath.ToSlash(flag.Arg(0))
 		if command == "flash" {
@@ -1689,7 +1631,7 @@ func main() {
 			for i := range bufs {
 				err := bufs[i].flush(os.Stdout, os.Stderr)
 				if err != nil {
-					// There was an error writing to stdout or stderr, so we probbably cannot print this.
+					// There was an error writing to stdout or stderr, so we probably cannot print this.
 					select {
 					case fail <- struct{}{}:
 					default:
@@ -1714,9 +1656,11 @@ func main() {
 				stderr := (*testStderr)(buf)
 				passed, err := Test(pkgName, stdout, stderr, options, outpath)
 				if err != nil {
-					printCompilerError(func(args ...interface{}) {
-						fmt.Fprintln(stderr, args...)
-					}, err)
+					wd, getwdErr := os.Getwd()
+					if getwdErr != nil {
+						wd = ""
+					}
+					diagnostics.CreateDiagnostics(err).WriteTo(os.Stderr, wd)
 				}
 				if !passed {
 					select {
@@ -1794,6 +1738,7 @@ func main() {
 				GOOS       string                  `json:"goos"`
 				GOARCH     string                  `json:"goarch"`
 				GOARM      string                  `json:"goarm"`
+				GOMIPS     string                  `json:"gomips"`
 				BuildTags  []string                `json:"build_tags"`
 				GC         string                  `json:"garbage_collector"`
 				Scheduler  string                  `json:"scheduler"`
@@ -1804,6 +1749,7 @@ func main() {
 				GOOS:       config.GOOS(),
 				GOARCH:     config.GOARCH(),
 				GOARM:      config.GOARM(),
+				GOMIPS:     config.GOMIPS(),
 				BuildTags:  config.BuildTags(),
 				GC:         config.GC(),
 				Scheduler:  config.Scheduler(),
