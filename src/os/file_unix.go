@@ -12,6 +12,7 @@ package os
 import (
 	"io"
 	"syscall"
+	_ "unsafe"
 )
 
 const DevNull = "/dev/null"
@@ -70,7 +71,7 @@ func Truncate(name string, size int64) error {
 
 func Pipe() (r *File, w *File, err error) {
 	var p [2]int
-	err = handleSyscallError(syscall.Pipe2(p[:], syscall.O_CLOEXEC))
+	err = handleSyscallError(pipe(p[:]))
 	if err != nil {
 		return
 	}
@@ -222,4 +223,18 @@ func newUnixDirent(parent, name string, typ FileMode) (DirEntry, error) {
 	ude.typ = info.Mode().Type()
 	ude.info = info
 	return ude, nil
+}
+
+// Since internal/poll is not available, we need to stub this out.
+// Big go requires the option to add the fd to the polling system.
+//
+//go:linkname net_newUnixFile net.newUnixFile
+func net_newUnixFile(fd int, name string) *File {
+	if fd < 0 {
+		panic("invalid FD")
+	}
+
+	// see src/os/file_unix.go:162 newFile for the original implementation.
+	// return newFile(fd, name, kindSock, true)
+	return NewFile(uintptr(fd), name)
 }

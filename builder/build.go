@@ -197,6 +197,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 		ABI:             config.ABI(),
 		GOOS:            config.GOOS(),
 		GOARCH:          config.GOARCH(),
+		BuildMode:       config.BuildMode(),
 		CodeModel:       config.CodeModel(),
 		RelocationModel: config.RelocationModel(),
 		SizeLevel:       sizeLevel,
@@ -649,6 +650,13 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 	result.Binary = result.Executable // final file
 	ldflags := append(config.LDFlags(), "-o", result.Executable)
 
+	if config.Options.BuildMode == "c-shared" {
+		if !strings.HasPrefix(config.Triple(), "wasm32-") {
+			return result, fmt.Errorf("buildmode c-shared is only supported on wasm at the moment")
+		}
+		ldflags = append(ldflags, "--no-entry")
+	}
+
 	// Add compiler-rt dependency if needed. Usually this is a simple load from
 	// a cache.
 	if config.Target.RTLib == "compiler-rt" {
@@ -823,19 +831,13 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 					args = append(args, "--asyncify")
 				}
 
-				exeunopt := result.Executable
-
-				if config.Options.Work {
-					// Keep the work direction around => don't overwrite the .wasm binary with the optimized version
-					exeunopt += ".pre-wasm-opt"
-					os.Rename(result.Executable, exeunopt)
-				}
-
+				inputFile := result.Binary
+				result.Binary = result.Executable + ".wasmopt"
 				args = append(args,
 					opt,
 					"-g",
-					exeunopt,
-					"--output", result.Executable,
+					inputFile,
+					"--output", result.Binary,
 				)
 
 				wasmopt := goenv.Get("WASMOPT")
@@ -865,13 +867,15 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 
 				// wasm-tools component embed -w wasi:cli/command
 				// 		$$(tinygo env TINYGOROOT)/lib/wasi-cli/wit/ main.wasm -o embedded.wasm
+				componentEmbedInputFile := result.Binary
+				result.Binary = result.Executable + ".wasm-component-embed"
 				args := []string{
 					"component",
 					"embed",
 					"-w", witWorld,
 					witPackage,
-					result.Executable,
-					"-o", result.Executable,
+					componentEmbedInputFile,
+					"-o", result.Binary,
 				}
 
 				wasmtools := goenv.Get("WASMTOOLS")
@@ -884,15 +888,17 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 
 				err := cmd.Run()
 				if err != nil {
-					return fmt.Errorf("wasm-tools failed: %w", err)
+					return fmt.Errorf("`wasm-tools component embed` failed: %w", err)
 				}
 
 				// wasm-tools component new embedded.wasm -o component.wasm
+				componentNewInputFile := result.Binary
+				result.Binary = result.Executable + ".wasm-component-new"
 				args = []string{
 					"component",
 					"new",
-					result.Executable,
-					"-o", result.Executable,
+					componentNewInputFile,
+					"-o", result.Binary,
 				}
 
 				if config.Options.PrintCommands != nil {
@@ -904,7 +910,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 
 				err = cmd.Run()
 				if err != nil {
-					return fmt.Errorf("wasm-tools failed: %w", err)
+					return fmt.Errorf("`wasm-tools component new` failed: %w", err)
 				}
 			}
 

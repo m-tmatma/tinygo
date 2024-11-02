@@ -157,7 +157,13 @@ func removeTimer(tim *timer) bool {
 }
 
 // Run the scheduler until all tasks have finished.
-func scheduler() {
+// There are a few special cases:
+//   - When returnAtDeadlock is true, it also returns when there are no more
+//     runnable goroutines.
+//   - When using the asyncify scheduler, it returns when it has to wait
+//     (JavaScript uses setTimeout so the scheduler must return to the JS
+//     environment).
+func scheduler(returnAtDeadlock bool) {
 	// Main scheduler loop.
 	var now timeUnit
 	for !schedulerDone {
@@ -193,6 +199,9 @@ func scheduler() {
 		t := runqueue.Pop()
 		if t == nil {
 			if sleepQueue == nil && timerQueue == nil {
+				if returnAtDeadlock {
+					return
+				}
 				if asyncScheduler {
 					// JavaScript is treated specially, see below.
 					return
@@ -236,24 +245,6 @@ func scheduler() {
 		scheduleLogTask("  run:", t)
 		t.Resume()
 	}
-}
-
-// This horrible hack exists to make WASM work properly.
-// When a WASM program calls into JS which calls back into WASM, the event with which we called back in needs to be handled before returning.
-// Thus there are two copies of the scheduler running at once.
-// This is a reduced version of the scheduler which does not deal with the timer queue (that is a problem for the outer scheduler).
-func minSched() {
-	scheduleLog("start nested scheduler")
-	for !schedulerDone {
-		t := runqueue.Pop()
-		if t == nil {
-			break
-		}
-
-		scheduleLogTask("  run:", t)
-		t.Resume()
-	}
-	scheduleLog("stop nested scheduler")
 }
 
 func Gosched() {

@@ -218,7 +218,7 @@ func listGorootMergeLinks(goroot, tinygoroot string, overrides map[string]bool) 
 // with the TinyGo version. This is the case on some targets.
 func needsSyscallPackage(buildTags []string) bool {
 	for _, tag := range buildTags {
-		if tag == "baremetal" || tag == "darwin" || tag == "nintendoswitch" || tag == "tinygo.wasm" {
+		if tag == "baremetal" || tag == "nintendoswitch" || tag == "tinygo.wasm" {
 			return true
 		}
 	}
@@ -229,30 +229,34 @@ func needsSyscallPackage(buildTags []string) bool {
 // means use the TinyGo version.
 func pathsToOverride(goMinor int, needsSyscallPackage bool) map[string]bool {
 	paths := map[string]bool{
-		"":                      true,
-		"crypto/":               true,
-		"crypto/rand/":          false,
-		"crypto/tls/":           false,
-		"device/":               false,
-		"examples/":             false,
-		"internal/":             true,
-		"internal/abi/":         false,
-		"internal/binary/":      false,
-		"internal/bytealg/":     false,
-		"internal/cm/":          false,
-		"internal/fuzz/":        false,
-		"internal/reflectlite/": false,
-		"internal/task/":        false,
-		"internal/wasi/":        false,
-		"machine/":              false,
-		"net/":                  true,
-		"net/http/":             false,
-		"os/":                   true,
-		"reflect/":              false,
-		"runtime/":              false,
-		"sync/":                 true,
-		"testing/":              true,
-		"unique/":               false,
+		"":                            true,
+		"crypto/":                     true,
+		"crypto/rand/":                false,
+		"crypto/tls/":                 false,
+		"crypto/x509/":                true,
+		"crypto/x509/internal/":       true,
+		"crypto/x509/internal/macos/": false,
+		"device/":                     false,
+		"examples/":                   false,
+		"internal/":                   true,
+		"internal/abi/":               false,
+		"internal/binary/":            false,
+		"internal/bytealg/":           false,
+		"internal/cm/":                false,
+		"internal/fuzz/":              false,
+		"internal/reflectlite/":       false,
+		"internal/gclayout":           false,
+		"internal/task/":              false,
+		"internal/wasi/":              false,
+		"machine/":                    false,
+		"net/":                        true,
+		"net/http/":                   false,
+		"os/":                         true,
+		"reflect/":                    false,
+		"runtime/":                    false,
+		"sync/":                       true,
+		"testing/":                    true,
+		"unique/":                     false,
 	}
 
 	if goMinor >= 19 {

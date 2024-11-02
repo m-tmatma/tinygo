@@ -32,6 +32,7 @@ type TargetSpec struct {
 	GOARCH           string   `json:"goarch,omitempty"`
 	SoftFloat        bool     // used for non-baremetal systems (GOMIPS=softfloat etc)
 	BuildTags        []string `json:"build-tags,omitempty"`
+	BuildMode        string   `json:"buildmode,omitempty"` // default build mode (if nothing specified)
 	GC               string   `json:"gc,omitempty"`
 	Scheduler        string   `json:"scheduler,omitempty"`
 	Serial           string   `json:"serial,omitempty"` // which serial output to use (uart, usb, none)
@@ -336,19 +337,19 @@ func defaultTarget(options *Options) (*TargetSpec, error) {
 			spec.Features = "+fp-armv8,+neon,-fmv,-outline-atomics"
 		}
 	case "mips", "mipsle":
-		spec.CPU = "mips32r2"
+		spec.CPU = "mips32"
 		spec.CFlags = append(spec.CFlags, "-fno-pic")
-		if options.GOOS == "mips" {
+		if options.GOARCH == "mips" {
 			llvmarch = "mips" // big endian
 		} else {
 			llvmarch = "mipsel" // little endian
 		}
 		switch options.GOMIPS {
 		case "hardfloat":
-			spec.Features = "+fpxx,+mips32r2,+nooddspreg,-noabicalls"
+			spec.Features = "+fpxx,+mips32,+nooddspreg,-noabicalls"
 		case "softfloat":
 			spec.SoftFloat = true
-			spec.Features = "+mips32r2,+soft-float,-noabicalls"
+			spec.Features = "+mips32,+soft-float,-noabicalls"
 			spec.CFlags = append(spec.CFlags, "-msoft-float")
 		default:
 			return nil, fmt.Errorf("invalid GOMIPS=%s: must be hardfloat or softfloat", options.GOMIPS)
@@ -389,7 +390,9 @@ func defaultTarget(options *Options) (*TargetSpec, error) {
 			"-platform_version", "macos", platformVersion, platformVersion,
 		)
 		spec.ExtraFiles = append(spec.ExtraFiles,
-			"src/runtime/runtime_unix.c")
+			"src/runtime/os_darwin.c",
+			"src/runtime/runtime_unix.c",
+			"src/runtime/signal.c")
 	case "linux":
 		spec.Linker = "ld.lld"
 		spec.RTLib = "compiler-rt"
@@ -410,7 +413,8 @@ func defaultTarget(options *Options) (*TargetSpec, error) {
 			spec.CFlags = append(spec.CFlags, "-mno-outline-atomics")
 		}
 		spec.ExtraFiles = append(spec.ExtraFiles,
-			"src/runtime/runtime_unix.c")
+			"src/runtime/runtime_unix.c",
+			"src/runtime/signal.c")
 	case "windows":
 		spec.Linker = "ld.lld"
 		spec.Libc = "mingw-w64"

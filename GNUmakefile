@@ -185,7 +185,7 @@ fmt-check: ## Warn if any source needs reformatting
 	@unformatted=$$(gofmt -l $(FMT_PATHS)); [ -z "$$unformatted" ] && exit 0; echo "Unformatted:"; for fn in $$unformatted; do echo "  $$fn"; done; exit 1
 
 
-gen-device: gen-device-avr gen-device-esp gen-device-nrf gen-device-sam gen-device-sifive gen-device-kendryte gen-device-nxp gen-device-rp ## Generate microcontroller-specific sources
+gen-device: gen-device-avr gen-device-esp gen-device-nrf gen-device-sam gen-device-sifive gen-device-kendryte gen-device-nxp gen-device-rp gen-device-renesas ## Generate microcontroller-specific sources
 ifneq ($(STM32), 0)
 gen-device: gen-device-stm32
 endif
@@ -234,7 +234,7 @@ gen-device-rp: build/gen-device-svd
 	GO111MODULE=off $(GO) fmt ./src/device/rp
 
 gen-device-renesas: build/gen-device-svd
-	./build/gen-device-svd -source=https://github.com/tinygo-org/renesas-svd lib/renesas-svd/ src/device/renesas/
+	./build/gen-device-svd -source=https://github.com/cmsis-svd/cmsis-svd-data/tree/master/data/Renesas lib/cmsis-svd/data/Renesas/ src/device/renesas/
 	GO111MODULE=off $(GO) fmt ./src/device/renesas
 
 $(LLVM_PROJECTDIR)/llvm:
@@ -267,7 +267,7 @@ lib/wasi-libc/sysroot/lib/wasm32-wasi/libc.a:
 	cd lib/wasi-libc && $(MAKE) -j4 EXTRA_CFLAGS="-O2 -g -DNDEBUG -mnontrapping-fptoint -msign-ext" MALLOC_IMPL=none CC="$(CLANG)" AR=$(LLVM_AR) NM=$(LLVM_NM)
 
 # Generate WASI syscall bindings
-WASM_TOOLS_MODULE=github.com/ydnar/wasm-tools-go
+WASM_TOOLS_MODULE=github.com/bytecodealliance/wasm-tools-go
 .PHONY: wasi-syscall
 wasi-syscall: wasi-cm
 	go run -modfile ./internal/wasm-tools/go.mod $(WASM_TOOLS_MODULE)/cmd/wit-bindgen-go generate --versioned -o ./src/internal -p internal --cm internal/cm ./lib/wasi-cli/wit
@@ -293,7 +293,7 @@ tinygo: ## Build the TinyGo compiler
 	@if [ ! -f "$(LLVM_BUILDDIR)/bin/llvm-config" ]; then echo "Fetch and build LLVM first by running:"; echo "  $(MAKE) llvm-source"; echo "  $(MAKE) $(LLVM_BUILDDIR)"; exit 1; fi
 	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GOENVFLAGS) $(GO) build -buildmode exe -o build/tinygo$(EXE) -tags "byollvm osusergo" -ldflags="-X github.com/tinygo-org/tinygo/goenv.GitSha1=`git rev-parse --short HEAD`" .
 test: wasi-libc check-nodejs-version
-	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GO) test $(GOTESTFLAGS) -timeout=20m -buildmode exe -tags "byollvm osusergo" $(GOTESTPKGS)
+	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GO) test $(GOTESTFLAGS) -timeout=1h -buildmode exe -tags "byollvm osusergo" $(GOTESTPKGS)
 
 # Standard library packages that pass tests on darwin, linux, wasi, and windows, but take over a minute in wasi
 TEST_PACKAGES_SLOW = \
@@ -303,26 +303,34 @@ TEST_PACKAGES_SLOW = \
 
 # Standard library packages that pass tests quickly on darwin, linux, wasi, and windows
 TEST_PACKAGES_FAST = \
+	cmp \
 	compress/lzw \
 	compress/zlib \
 	container/heap \
 	container/list \
 	container/ring \
 	crypto/des \
+	crypto/ecdsa \
+	crypto/elliptic \
 	crypto/md5 \
 	crypto/rc4 \
 	crypto/sha1 \
 	crypto/sha256 \
 	crypto/sha512 \
+	database/sql/driver \
 	debug/macho \
 	embed/internal/embedtest \
 	encoding \
 	encoding/ascii85 \
+	encoding/asn1 \
 	encoding/base32 \
 	encoding/base64 \
 	encoding/csv \
 	encoding/hex \
+	go/ast \
+	go/format \
 	go/scanner \
+	go/version \
 	hash \
 	hash/adler32 \
 	hash/crc64 \
@@ -357,11 +365,17 @@ endif
 # archive/zip requires os.ReadAt, which is not yet supported on windows
 # bytes requires mmap
 # compress/flate appears to hang on wasi
+# crypto/aes fails on wasi, needs panic()/recover()
 # crypto/hmac fails on wasi, it exits with a "slice out of range" panic
 # debug/plan9obj requires os.ReadAt, which is not yet supported on windows
 # image requires recover(), which is not yet supported on wasi
 # io/ioutil requires os.ReadDir, which is not yet supported on windows or wasi
+# mime: fail on wasi; neds panic()/recover()
+# mime/multipart: needs wasip1 syscall.FDFLAG_NONBLOCK
 # mime/quotedprintable requires syscall.Faccessat
+# net/mail: needs wasip1  syscall.FDFLAG_NONBLOCK
+# net/ntextproto: needs wasip1 syscall.FDFLAG_NONBLOCK
+# regexp/syntax: fails on wasip1; needs panic()/recover()
 # strconv requires recover() which is not yet supported on wasi
 # text/tabwriter requires recover(), which is not yet supported on wasi
 # text/template/parse requires recover(), which is not yet supported on wasi
@@ -371,14 +385,20 @@ endif
 TEST_PACKAGES_LINUX := \
 	archive/zip \
 	compress/flate \
+	crypto/aes \
 	crypto/hmac \
 	debug/dwarf \
 	debug/plan9obj \
 	image \
 	io/ioutil \
+	mime \
+	mime/multipart \
 	mime/quotedprintable \
 	net \
+	net/mail \
+	net/textproto \
 	os/user \
+	regexp/syntax \
 	strconv \
 	text/tabwriter \
 	text/template/parse
@@ -483,8 +503,17 @@ tinygo-baremetal:
 	# regression test for #2666: e.g. encoding/hex must pass on baremetal
 	$(TINYGO) test -target cortex-m-qemu encoding/hex
 
+.PHONY: testchdir
+testchdir:
+	# test 'build' command with{,out} -C argument
+	$(TINYGO) build -C tests/testing/chdir chdir.go && rm tests/testing/chdir/chdir
+	$(TINYGO) build ./tests/testing/chdir/chdir.go && rm chdir
+	# test 'run' command with{,out} -C argument
+	EXPECT_DIR=$(PWD)/tests/testing/chdir $(TINYGO) run -C tests/testing/chdir chdir.go
+	EXPECT_DIR=$(PWD) $(TINYGO) run ./tests/testing/chdir/chdir.go
+
 .PHONY: smoketest
-smoketest:
+smoketest: testchdir
 	$(TINYGO) version
 	$(TINYGO) targets > /dev/null
 	# regression test for #2892
@@ -641,6 +670,8 @@ endif
 	$(TINYGO) build -size short -o test.hex -target=pygamer             examples/blinky1
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=xiao                examples/blinky1
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=rak4631             examples/blinky1
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=circuitplay-express examples/dac
 	@$(MD5SUM) test.hex
@@ -804,11 +835,19 @@ ifneq ($(XTENSA), 0)
 	$(TINYGO) build -size short -o test.bin -target mch2022             examples/machinetest
 	@$(MD5SUM) test.bin
 endif
+	$(TINYGO) build -size short -o test.bin -target=esp-c3-32s-kit      examples/blinky1
+	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target=qtpy-esp32c3        examples/machinetest
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target=m5stamp-c3          examples/machinetest
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target=xiao-esp32c3        examples/machinetest
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=esp32-c3-devkit-rust-1 examples/blinky1
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=esp32c3-12f         examples/blinky1
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=makerfabs-esp32c3spi35 examples/machinetest
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.hex -target=hifive1b            examples/blinky1
 	@$(MD5SUM) test.hex

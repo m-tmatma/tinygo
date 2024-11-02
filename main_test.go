@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"io"
@@ -21,6 +22,9 @@ import (
 	"time"
 
 	"github.com/aykevl/go-wasm"
+	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
 	"github.com/tinygo-org/tinygo/builder"
 	"github.com/tinygo-org/tinygo/compileopts"
 	"github.com/tinygo-org/tinygo/diagnostics"
@@ -36,7 +40,7 @@ var supportedLinuxArches = map[string]string{
 	"X86Linux":   "linux/386",
 	"ARMLinux":   "linux/arm/6",
 	"ARM64Linux": "linux/arm64",
-	"MIPSLinux":  "linux/mipsle/hardfloat",
+	"MIPSLinux":  "linux/mips/hardfloat",
 	"WASIp1":     "wasip1/wasm",
 }
 
@@ -75,6 +79,7 @@ func TestBuild(t *testing.T) {
 		"oldgo/",
 		"print.go",
 		"reflect.go",
+		"signal.go",
 		"slice.go",
 		"sort.go",
 		"stdlib.go",
@@ -177,6 +182,15 @@ func TestBuild(t *testing.T) {
 				})
 			}
 		}
+		t.Run("MIPS little-endian", func(t *testing.T) {
+			// Run a single test for GOARCH=mipsle to see whether it works at
+			// all. It is already mostly tested because GOARCH=mips and
+			// GOARCH=mipsle are so similar, but it's good to have an extra test
+			// to be sure.
+			t.Parallel()
+			options := optionsFromOSARCH("linux/mipsle/softfloat", sema)
+			runTest("cgo/", options, t, nil, nil)
+		})
 		t.Run("WebAssembly", func(t *testing.T) {
 			t.Parallel()
 			runPlatTests(optionsFromTarget("wasm", sema), tests, t)
@@ -204,6 +218,7 @@ func runPlatTests(options compileopts.Options, tests []string, t *testing.T) {
 	// isWebAssembly := strings.HasPrefix(spec.Triple, "wasm")
 	isWASI := strings.HasPrefix(options.Target, "wasi")
 	isWebAssembly := isWASI || strings.HasPrefix(options.Target, "wasm") || (options.Target == "" && strings.HasPrefix(options.GOARCH, "wasm"))
+	isBaremetal := options.Target == "simavr" || options.Target == "cortex-m-qemu" || options.Target == "riscv-qemu"
 
 	for _, name := range tests {
 		if options.GOOS == "linux" && (options.GOARCH == "arm" || options.GOARCH == "386") {
@@ -217,6 +232,13 @@ func runPlatTests(options compileopts.Options, tests []string, t *testing.T) {
 		if options.GOOS == "linux" && (options.GOARCH == "mips" || options.GOARCH == "mipsle") {
 			if name == "atomic.go" || name == "timers.go" {
 				// 64-bit atomic operations aren't currently supported on MIPS.
+				continue
+			}
+		}
+		if options.GOOS == "linux" && options.GOARCH == "mips" {
+			if name == "cgo/" {
+				// CGo isn't supported yet on big-endian systems (needs updates
+				// to bitfield access methods).
 				continue
 			}
 		}
@@ -258,6 +280,13 @@ func runPlatTests(options compileopts.Options, tests []string, t *testing.T) {
 			switch name {
 			case "cgo/":
 				// waisp2 use our own libc; cgo tests fail
+				continue
+			}
+		}
+		if isWebAssembly || isBaremetal || options.GOOS == "windows" {
+			switch name {
+			case "signal.go":
+				// Signals only work on POSIX-like systems.
 				continue
 			}
 		}
@@ -376,16 +405,12 @@ func runTestWithConfig(name string, t *testing.T, options compileopts.Options, c
 	// of the path.
 	path := TESTDATA + "/" + name
 	// Get the expected output for this test.
-	txtpath := path[:len(path)-3] + ".txt"
+	expectedOutputPath := path[:len(path)-3] + ".txt"
 	pkgName := "./" + path
 	if path[len(path)-1] == '/' {
-		txtpath = path + "out.txt"
+		expectedOutputPath = path + "out.txt"
 		options.Directory = path
 		pkgName = "."
-	}
-	expected, err := os.ReadFile(txtpath)
-	if err != nil {
-		t.Fatal("could not read expected output file:", err)
 	}
 
 	config, err := builder.NewConfig(&options)
@@ -408,10 +433,7 @@ func runTestWithConfig(name string, t *testing.T, options compileopts.Options, c
 		return
 	}
 
-	// putchar() prints CRLF, convert it to LF.
-	actual := bytes.Replace(stdout.Bytes(), []byte{'\r', '\n'}, []byte{'\n'}, -1)
-	expected = bytes.Replace(expected, []byte{'\r', '\n'}, []byte{'\n'}, -1) // for Windows
-
+	actual := stdout.Bytes()
 	if config.EmulatorName() == "simavr" {
 		// Strip simavr log formatting.
 		actual = bytes.Replace(actual, []byte{0x1b, '[', '3', '2', 'm'}, nil, -1)
@@ -426,17 +448,12 @@ func runTestWithConfig(name string, t *testing.T, options compileopts.Options, c
 	}
 
 	// Check whether the command ran successfully.
-	fail := false
 	if err != nil {
-		t.Log("failed to run:", err)
-		fail = true
-	} else if !bytes.Equal(expected, actual) {
-		t.Logf("output did not match (expected %d bytes, got %d bytes):", len(expected), len(actual))
-		t.Logf(string(Diff("expected", expected, "actual", actual)))
-		fail = true
+		t.Error("failed to run:", err)
 	}
+	checkOutput(t, expectedOutputPath, actual)
 
-	if fail {
+	if t.Failed() {
 		r := bufio.NewReader(bytes.NewReader(actual))
 		for {
 			line, err := r.ReadString('\n')
@@ -454,20 +471,21 @@ func TestWebAssembly(t *testing.T) {
 	t.Parallel()
 	type testCase struct {
 		name          string
+		target        string
 		panicStrategy string
 		imports       []string
 	}
 	for _, tc := range []testCase{
 		// Test whether there really are no imports when using -panic=trap. This
 		// tests the bugfix for https://github.com/tinygo-org/tinygo/issues/4161.
-		{name: "panic-default", imports: []string{"wasi_snapshot_preview1.fd_write"}},
-		{name: "panic-trap", panicStrategy: "trap", imports: []string{}},
+		{name: "panic-default", target: "wasip1", imports: []string{"wasi_snapshot_preview1.fd_write", "wasi_snapshot_preview1.random_get"}},
+		{name: "panic-trap", target: "wasm-unknown", panicStrategy: "trap", imports: []string{}},
 	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tmpdir := t.TempDir()
-			options := optionsFromTarget("wasi", sema)
+			options := optionsFromTarget(tc.target, sema)
 			options.PanicStrategy = tc.panicStrategy
 			config, err := builder.NewConfig(&options)
 			if err != nil {
@@ -504,6 +522,262 @@ func TestWebAssembly(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWasmExport(t *testing.T) {
+	t.Parallel()
+
+	type testCase struct {
+		name      string
+		target    string
+		buildMode string
+		scheduler string
+		file      string
+		noOutput  bool
+		command   bool // call _start (command mode) instead of _initialize
+	}
+
+	tests := []testCase{
+		// "command mode" WASI
+		{
+			name:    "WASIp1-command",
+			target:  "wasip1",
+			command: true,
+		},
+		// "reactor mode" WASI (with -buildmode=c-shared)
+		{
+			name:      "WASIp1-reactor",
+			target:    "wasip1",
+			buildMode: "c-shared",
+		},
+		// Make sure reactor mode also works without a scheduler.
+		{
+			name:      "WASIp1-reactor-noscheduler",
+			target:    "wasip1",
+			buildMode: "c-shared",
+			scheduler: "none",
+			file:      "wasmexport-noscheduler.go",
+		},
+		// Test -target=wasm-unknown with the default build mode (which is
+		// c-shared).
+		{
+			name:     "wasm-unknown-reactor",
+			target:   "wasm-unknown",
+			file:     "wasmexport-noscheduler.go",
+			noOutput: true, // wasm-unknown cannot produce output
+		},
+		// Test -target=wasm-unknown with -buildmode=default, which makes it run
+		// in command mode.
+		{
+			name:      "wasm-unknown-command",
+			target:    "wasm-unknown",
+			buildMode: "default",
+			file:      "wasmexport-noscheduler.go",
+			noOutput:  true, // wasm-unknown cannot produce output
+			command:   true,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			// Build the wasm binary.
+			tmpdir := t.TempDir()
+			options := optionsFromTarget(tc.target, sema)
+			options.BuildMode = tc.buildMode
+			options.Scheduler = tc.scheduler
+			buildConfig, err := builder.NewConfig(&options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			filename := "wasmexport.go"
+			if tc.file != "" {
+				filename = tc.file
+			}
+			result, err := builder.Build("testdata/"+filename, ".wasm", tmpdir, buildConfig)
+			if err != nil {
+				t.Fatal("failed to build binary:", err)
+			}
+
+			// Read the wasm binary back into memory.
+			data, err := os.ReadFile(result.Binary)
+			if err != nil {
+				t.Fatal("could not read wasm binary: ", err)
+			}
+
+			// Set up the wazero runtime.
+			output := &bytes.Buffer{}
+			ctx := context.Background()
+			r := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfigInterpreter())
+			defer r.Close(ctx)
+			config := wazero.NewModuleConfig().
+				WithStdout(output).WithStderr(output).
+				WithStartFunctions()
+
+			// Prepare for testing.
+			var mod api.Module
+			mustCall := func(results []uint64, err error) []uint64 {
+				if err != nil {
+					t.Error("failed to run function:", err)
+				}
+				return results
+			}
+			checkResult := func(name string, results []uint64, expected []uint64) {
+				if len(results) != len(expected) {
+					t.Errorf("%s: expected %v but got %v", name, expected, results)
+				}
+				for i, result := range results {
+					if result != expected[i] {
+						t.Errorf("%s: expected %v but got %v", name, expected, results)
+						break
+					}
+				}
+			}
+			runTests := func() {
+				// Test an exported function without params or return value.
+				checkResult("hello()", mustCall(mod.ExportedFunction("hello").Call(ctx)), nil)
+
+				// Test that we can call an exported function more than once.
+				checkResult("add(3, 5)", mustCall(mod.ExportedFunction("add").Call(ctx, 3, 5)), []uint64{8})
+				checkResult("add(7, 9)", mustCall(mod.ExportedFunction("add").Call(ctx, 7, 9)), []uint64{16})
+				checkResult("add(6, 1)", mustCall(mod.ExportedFunction("add").Call(ctx, 6, 1)), []uint64{7})
+
+				// Test that imported functions can call exported functions
+				// again.
+				checkResult("reentrantCall(2, 3)", mustCall(mod.ExportedFunction("reentrantCall").Call(ctx, 2, 3)), []uint64{5})
+				checkResult("reentrantCall(1, 8)", mustCall(mod.ExportedFunction("reentrantCall").Call(ctx, 1, 8)), []uint64{9})
+			}
+
+			// Add wasip1 module.
+			wasi_snapshot_preview1.MustInstantiate(ctx, r)
+
+			// Add custom "tester" module.
+			callOutside := func(a, b int32) int32 {
+				results, err := mod.ExportedFunction("add").Call(ctx, uint64(a), uint64(b))
+				if err != nil {
+					t.Error("could not call exported add function:", err)
+				}
+				return int32(results[0])
+			}
+			callTestMain := func() {
+				runTests()
+			}
+			builder := r.NewHostModuleBuilder("tester")
+			builder.NewFunctionBuilder().WithFunc(callOutside).Export("callOutside")
+			builder.NewFunctionBuilder().WithFunc(callTestMain).Export("callTestMain")
+			_, err = builder.Instantiate(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Parse and instantiate the wasm.
+			mod, err = r.InstantiateWithConfig(ctx, data, config)
+			if err != nil {
+				t.Fatal("could not instantiate wasm module:", err)
+			}
+
+			// Initialize the module and run the tests.
+			if tc.command {
+				// Call _start (the entry point), which calls
+				// tester.callTestMain, which then runs all the tests.
+				mustCall(mod.ExportedFunction("_start").Call(ctx))
+			} else {
+				// Run the _initialize call, because this is reactor mode wasm.
+				mustCall(mod.ExportedFunction("_initialize").Call(ctx))
+				runTests()
+			}
+
+			// Check that the output matches the expected output.
+			// (Skip this for wasm-unknown because it can't produce output).
+			if !tc.noOutput {
+				checkOutput(t, "testdata/wasmexport.txt", output.Bytes())
+			}
+		})
+	}
+}
+
+// Test js.FuncOf (for syscall/js).
+// This test might be extended in the future to cover more cases in syscall/js.
+func TestWasmFuncOf(t *testing.T) {
+	// Build the wasm binary.
+	tmpdir := t.TempDir()
+	options := optionsFromTarget("wasm", sema)
+	buildConfig, err := builder.NewConfig(&options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := builder.Build("testdata/wasmfunc.go", ".wasm", tmpdir, buildConfig)
+	if err != nil {
+		t.Fatal("failed to build binary:", err)
+	}
+
+	// Test the resulting binary using NodeJS.
+	output := &bytes.Buffer{}
+	cmd := exec.Command("node", "testdata/wasmfunc.js", result.Binary, buildConfig.BuildMode())
+	cmd.Stdout = output
+	cmd.Stderr = output
+	err = cmd.Run()
+	if err != nil {
+		t.Error("failed to run node:", err)
+	}
+	checkOutput(t, "testdata/wasmfunc.txt", output.Bytes())
+}
+
+// Test //go:wasmexport in JavaScript (using NodeJS).
+func TestWasmExportJS(t *testing.T) {
+	type testCase struct {
+		name      string
+		buildMode string
+	}
+
+	tests := []testCase{
+		{name: "default"},
+		{name: "c-shared", buildMode: "c-shared"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Build the wasm binary.
+			tmpdir := t.TempDir()
+			options := optionsFromTarget("wasm", sema)
+			options.BuildMode = tc.buildMode
+			buildConfig, err := builder.NewConfig(&options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := builder.Build("testdata/wasmexport-noscheduler.go", ".wasm", tmpdir, buildConfig)
+			if err != nil {
+				t.Fatal("failed to build binary:", err)
+			}
+
+			// Test the resulting binary using NodeJS.
+			output := &bytes.Buffer{}
+			cmd := exec.Command("node", "testdata/wasmexport.js", result.Binary, buildConfig.BuildMode())
+			cmd.Stdout = output
+			cmd.Stderr = output
+			err = cmd.Run()
+			if err != nil {
+				t.Error("failed to run node:", err)
+			}
+			checkOutput(t, "testdata/wasmexport.txt", output.Bytes())
+		})
+	}
+}
+
+// Check whether the output of a test equals the expected output.
+func checkOutput(t *testing.T, filename string, actual []byte) {
+	expectedOutput, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal("could not read output file:", err)
+	}
+	expectedOutput = bytes.ReplaceAll(expectedOutput, []byte("\r\n"), []byte("\n"))
+	actual = bytes.ReplaceAll(actual, []byte("\r\n"), []byte("\n"))
+
+	if !bytes.Equal(actual, expectedOutput) {
+		t.Errorf("output did not match (expected %d bytes, got %d bytes):", len(expectedOutput), len(actual))
+		t.Error(string(Diff("expected", expectedOutput, "actual", actual)))
 	}
 }
 

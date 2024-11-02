@@ -1,3 +1,53 @@
+0.34.0
+---
+* **general**
+  - fix `GOOS=wasip1` for `tinygo test`
+  - add `-C DIR` flag
+  - add initial documentation for project governance
+  - add `-ldflags='-extldflags=...'` support
+  - improve usage message with `tinygo help` and when passing invalid parameters
+* **compiler**
+  - `builder`: remove environment variables when invoking Clang, to avoid the environment changing the behavior
+  - `builder`: check for the Go toolchain version used to compile TinyGo
+  - `cgo`: add `C.CBytes` implementation
+  - `compiler`: fix passing weirdly-padded structs as parameters to new goroutines
+  - `compiler`: support pragmas on generic functions
+  - `compiler`: do not let the slice buffer escape when casting a `[]byte` or `[]rune` to a string, to help escape analysis
+  - `compiler`: conform to the latest iteration of the wasm types proposal
+  - `loader`: don't panic when main package is not named 'main'
+  - `loader`: make sure we always return type checker errors even without type errors
+  - `transform`: optimize range over `[]byte(string)`
+* **standard library**
+  - `crypto/x509`: add package stub to build crypto/x509 on macOS
+  - `machine/usb/adc/midi`: fix `PitchBend`
+  - `os`: add `Truncate` stub for baremetal
+  - `os`: add stubs for `os.File` deadlines
+  - `os`: add internal `net.newUnixFile` for the net package
+  - `runtime`: stub runtime_{Before,After}Exec for linkage
+  - `runtime`: randomize map accesses
+  - `runtime`: support `maps.Clone`
+  - `runtime`: add more fields to `MemStats`
+  - `runtime`: implement newcoro, coroswitch to support package iter
+  - `runtime`: disallow defer in interrupts
+  - `runtime`: add support for os/signal on Linux and MacOS
+  - `runtime`: add gc layout info for some basic types to help the precise GC
+  - `runtime`: bump GC mark stack size to avoid excessive heap rescans
+* **targets**
+  - `darwin`: use Go standard library syscall package instead of a custom one
+  - `fe310`: support GPIO `PinInput`
+  - `mips`: fix compiler crash with GOMIPS=softfloat and defer
+  - `mips`: add big-endian (GOARCH=mips) support
+  - `mips`: use MIPS32 (instead of MIPS32R2) as the instruction set for wider compatibility
+  - `wasi`: add relative and absolute --dir options to wasmtime args
+  - `wasip2`: add wasmtime -S args to support network interfaces
+  - `wasm`: add `//go:wasmexport` support (for all WebAssembly targets)
+  - `wasm`: use precise instead of conservative GC for WebAssembly (including WASI)
+  - `wasm-unknown`: add bulk memory flags since basically every runtime has it now
+* **boards**
+  - add RAKwireless RAK4631
+  - add WaveShare ESP-C3-32S-Kit
+
+
 0.33.0
 ---
 

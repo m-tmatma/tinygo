@@ -283,48 +283,6 @@ func Test(pkgName string, stdout, stderr io.Writer, options *compileopts.Options
 		// Tests are always run in the package directory.
 		cmd.Dir = result.MainDir
 
-		// wasmtime is the default emulator used for `-target=wasip1`. wasmtime
-		// is a WebAssembly runtime CLI with WASI enabled by default. However,
-		// only stdio are allowed by default. For example, while STDOUT routes
-		// to the host, other files don't. It also does not inherit environment
-		// variables from the host. Some tests read testdata files, often from
-		// outside the package directory. Other tests require temporary
-		// writeable directories. We allow this by adding wasmtime flags below.
-		if config.EmulatorName() == "wasmtime" {
-			// At this point, The current working directory is at the package
-			// directory. Ex. $GOROOT/src/compress/flate for compress/flate.
-			// buildAndRun has already added arguments for wasmtime, that allow
-			// read-access to files such as "testdata/huffman-zero.in".
-			//
-			// Ex. main(.wasm) --dir=. -- -test.v
-
-			// Below adds additional wasmtime flags in case a test reads files
-			// outside its directory, like "../testdata/e.txt". This allows any
-			// relative directory up to the module root, even if the test never
-			// reads any files.
-			//
-			// Ex. run --dir=.. --dir=../.. --dir=../../..
-			var dirs []string
-			switch config.Options.Target {
-			case "wasip1":
-				dirs = dirsToModuleRootRel(result.MainDir, result.ModuleRoot)
-			case "wasip2":
-				dirs = dirsToModuleRootAbs(result.MainDir, result.ModuleRoot)
-			default:
-				return fmt.Errorf("unknown GOOS target: %v", config.Options.Target)
-			}
-
-			args := []string{"run"}
-			for _, d := range dirs {
-				args = append(args, "--dir="+d)
-			}
-
-			args = append(args, "--env=PWD="+cmd.Dir)
-
-			args = append(args, cmd.Args[1:]...)
-			cmd.Args = args
-		}
-
 		// Run the test.
 		start := time.Now()
 		err = cmd.Run()
@@ -850,12 +808,11 @@ func buildAndRun(pkgName string, config *compileopts.Config, stdout io.Writer, c
 		for _, v := range environmentVars {
 			emuArgs = append(emuArgs, "--env", v)
 		}
-		if len(cmdArgs) != 0 {
-			// Use of '--' argument no longer necessary as of Wasmtime v14:
-			// https://github.com/bytecodealliance/wasmtime/pull/6946
-			// args = append(args, "--")
-			args = append(args, cmdArgs...)
-		}
+
+		// Use of '--' argument no longer necessary as of Wasmtime v14:
+		// https://github.com/bytecodealliance/wasmtime/pull/6946
+		// args = append(args, "--")
+		args = append(args, cmdArgs...)
 
 		// Set this for nicer backtraces during tests, but don't override the user.
 		if _, ok := os.LookupEnv("WASMTIME_BACKTRACE_DETAILS"); !ok {
@@ -905,21 +862,36 @@ func buildAndRun(pkgName string, config *compileopts.Config, stdout io.Writer, c
 
 		name = emulator[0]
 
+		// wasmtime is a WebAssembly runtime CLI with WASI enabled by default.
+		// By default, only stdio is allowed. For example, while STDOUT routes
+		// to the host, other files don't. It also does not inherit environment
+		// variables from the host. Some tests read testdata files, often from
+		// outside the package directory. Other tests require temporary
+		// writeable directories. We allow this by adding wasmtime flags below.
 		if name == "wasmtime" {
-			// Wasmtime needs some special flags to pass environment variables
-			// and allow reading from the current directory.
-			switch config.Options.Target {
-			case "wasip1":
-				emuArgs = append(emuArgs, "--dir=.")
-			case "wasip2":
-				dir := result.MainDir
-				if isSingleFile {
-					cwd, _ := os.Getwd()
-					dir = cwd
+			// Below adds additional wasmtime flags in case a test reads files
+			// outside its directory, like "../testdata/e.txt". This allows any
+			// relative directory up to the module root, even if the test never
+			// reads any files.
+			if config.TestConfig.CompileTestBinary {
+				// Add relative dirs (../, ../..) up to module root (for wasip1)
+				dirs := dirsToModuleRootRel(result.MainDir, result.ModuleRoot)
+
+				// Add absolute dirs up to module root (for wasip2)
+				dirs = append(dirs, dirsToModuleRootAbs(result.MainDir, result.ModuleRoot)...)
+
+				for _, d := range dirs {
+					emuArgs = append(emuArgs, "--dir="+d)
 				}
-				emuArgs = append(emuArgs, "--dir="+dir)
-				emuArgs = append(emuArgs, "--env=PWD="+dir)
 			}
+
+			dir := result.MainDir
+			if isSingleFile {
+				dir, _ = os.Getwd()
+			}
+			emuArgs = append(emuArgs, "--dir=.")
+			emuArgs = append(emuArgs, "--dir="+dir)
+			emuArgs = append(emuArgs, "--env=PWD="+dir)
 		}
 
 		emuArgs = append(emuArgs, emulator[1:]...)
@@ -1258,36 +1230,169 @@ func getBMPPorts() (gdbPort, uartPort string, err error) {
 	}
 }
 
-func usage(command string) {
-	switch command {
-	default:
-		fmt.Fprintln(os.Stderr, "TinyGo is a Go compiler for small places.")
-		fmt.Fprintln(os.Stderr, "version:", goenv.Version())
-		fmt.Fprintf(os.Stderr, "usage: %s <command> [arguments]\n", os.Args[0])
-		fmt.Fprintln(os.Stderr, "\ncommands:")
-		fmt.Fprintln(os.Stderr, "  build:   compile packages and dependencies")
-		fmt.Fprintln(os.Stderr, "  run:     compile and run immediately")
-		fmt.Fprintln(os.Stderr, "  test:    test packages")
-		fmt.Fprintln(os.Stderr, "  flash:   compile and flash to the device")
-		fmt.Fprintln(os.Stderr, "  gdb:     run/flash and immediately enter GDB")
-		fmt.Fprintln(os.Stderr, "  lldb:    run/flash and immediately enter LLDB")
-		fmt.Fprintln(os.Stderr, "  monitor: open communication port")
-		fmt.Fprintln(os.Stderr, "  ports:   list available serial ports")
-		fmt.Fprintln(os.Stderr, "  env:     list environment variables used during build")
-		fmt.Fprintln(os.Stderr, "  list:    run go list using the TinyGo root")
-		fmt.Fprintln(os.Stderr, "  clean:   empty cache directory ("+goenv.Get("GOCACHE")+")")
-		fmt.Fprintln(os.Stderr, "  targets: list targets")
-		fmt.Fprintln(os.Stderr, "  info:    show info for specified target")
-		fmt.Fprintln(os.Stderr, "  version: show version")
-		fmt.Fprintln(os.Stderr, "  help:    print this help text")
+const (
+	usageBuild = `Build compiles the packages named by the import paths, along with their
+dependencies, but it does not install the results. The output binary is
+specified using the -o parameter. The generated file type depends on the
+extension:
 
+	.o:
+			Create a relocatable object file. You can use this option if you
+			don't want to use the TinyGo build system or want to do other custom
+			things.
+
+	.ll:
+			Create textual LLVM IR, after optimization. This is mainly useful
+			for debugging.
+
+	.bc:
+			Create LLVM bitcode, after optimization. This may be useful for
+			debugging or for linking into other programs using LTO.
+
+	.hex:
+			Create an Intel HEX file to flash it to a microcontroller.
+
+	.bin:
+			Similar, but create a binary file.
+
+	.wasm:
+			Compile and link a WebAssembly file.
+
+(all other) Compile and link the program into a regular executable. For
+microcontrollers, it is common to use the .elf file extension to indicate a
+linked ELF file is generated. For Linux, it is common to build binaries with no
+extension at all.`
+
+	usageRun = `Run the program, either directly on the host or in an emulated environment 
+(depending on -target).`
+
+	usageFlash = `Flash the program to a microcontroller. Some common flags are described below.
+
+	-target={name}: 
+			Specifies the type of microcontroller that is used. The name of the
+			microcontroller is given on the individual pages for each board type
+			listed under Microcontrollers
+			(https://tinygo.org/docs/reference/microcontrollers/).
+			Examples: "arduino-nano", "d1mini", "xiao".
+
+	-monitor: 
+			Start the serial monitor (see below) immediately after
+			flashing. However, some microcontrollers need a split second
+			or two to configure the serial port after flashing, and
+			using the "-monitor" flag can fail because the serial
+			monitor starts too quickly. In that case, use the "tinygo
+			monitor" command explicitly.`
+
+	usageMonitor = `Start the serial monitor on the serial port that is connected to the
+microcontroller. If there is only a single board attached to the host computer,
+the default values for various options should be sufficient. In other
+situations, particularly if you have multiple microcontrollers attached, some
+parameters may need to be overridden using the following flags:
+
+	-port={port}:
+			If there are multiple microcontroller attached, an error
+			message will display a list of potential serial ports. The
+			appropriate port can be specified by this flag. On Linux,
+			the port will be something like /dev/ttyUSB0 or /dev/ttyACM1.
+			On MacOS, the port will look like /dev/cu.usbserial-1420. On
+			Windows, the port will be something like COM1 or COM31.
+
+	-baudrate={rate}:
+			The default baud rate is 115200. Boards using the AVR
+			processor (e.g. Arduino Nano, Arduino Mega 2560) use 9600
+			instead.
+
+	-target={name}:
+			If you have more than one microcontrollers attached, you can
+			sometimes just specify the target name and let tinygo
+			monitor figure out the port. Sometimes, this does not work
+			and you have to explicitly use the -port flag.
+
+The serial monitor intercepts several control characters for its own use instead of sending them
+to the microcontroller:
+
+	Control-C: terminates the tinygo monitor
+	Control-Z: suspends the tinygo monitor and drops back into shell
+	Control-\: terminates the tinygo monitor with a stack trace
+	Control-S: flow control, suspends output to the console
+	Control-Q: flow control, resumes output to the console
+	Control-@: thrown away by tinygo monitor
+
+Note: If you are using os.Stdin on the microcontroller, you may find that a CR
+character on the host computer (also known as Enter, ^M, or \r) is transmitted
+to the microcontroller without conversion, so os.Stdin returns a \r character
+instead of the expected \n (also known as ^J, NL, or LF) to indicate
+end-of-line. You may be able to get around this problem by hitting Control-J in
+tinygo monitor to transmit the \n end-of-line character.`
+
+	usageGdb = `Build the program, optionally flash it to a microcontroller if it is a remote 
+target, and drop into a GDB shell. From there you can set breakpoints, start the
+program with "run" or "continue" ("run" for a local program, continue for
+on-chip debugging), single-step, show a backtrace, break and resume the program
+with Ctrl-C/"continue", etc. You may need to install extra tools (like openocd
+and arm-none-eabi-gdb) to be able to do this. Also, you may need a dedicated
+debugger to be able to debug certain boards if no debugger is integrated. Some
+boards (like the BBC micro:bit and most professional evaluation boards) have an
+integrated debugger.`
+
+	usageClean = `Clean the cache directory, normally stored in $HOME/.cache/tinygo. This is not
+normally needed.`
+
+	usageHelp    = `Print a short summary of the available commands, plus a list of command flags.`
+	usageVersion = `Print the version of the command and the version of the used $GOROOT.`
+	usageEnv     = `Print a list of environment variables that affect TinyGo (as a shell script).
+If one or more variable names are given as arguments, env prints the value of
+each on a new line.`
+
+	usageDefault = `TinyGo is a Go compiler for small places.
+version: %s
+usage: %s <command> [arguments]
+commands:
+		build:		compile packages and dependencies
+		run:		compile and run immediately
+		test:		test packages
+		flash:		compile and flash to the device
+		gdb:		run/flash and immediately enter GDB
+		lldb:		run/flash and immediately enter LLDB
+		monitor:	open communication port
+		ports:		list available serial ports
+		env:		list environment variables used during build
+		list:		run go list using the TinyGo root
+		clean:		empty cache directory (%s)
+		targets:	list targets
+		info:		show info for specified target
+		version:	show version
+		help:		print this help text`
+)
+
+var (
+	commandHelp = map[string]string{
+		"build":   usageBuild,
+		"run":     usageRun,
+		"flash":   usageFlash,
+		"monitor": usageMonitor,
+		"gdb":     usageGdb,
+		"clean":   usageClean,
+		"help":    usageHelp,
+		"version": usageVersion,
+		"env":     usageEnv,
+	}
+)
+
+func usage(command string) {
+	val, ok := commandHelp[command]
+	if !ok {
+		fmt.Fprintf(os.Stderr, usageDefault, goenv.Version(), os.Args[0], goenv.Get("GOCACHE"))
 		if flag.Parsed() {
 			fmt.Fprintln(os.Stderr, "\nflags:")
 			flag.PrintDefaults()
 		}
 
 		fmt.Fprintln(os.Stderr, "\nfor more details, see https://tinygo.org/docs/reference/usage/")
+	} else {
+		fmt.Fprintln(os.Stderr, val)
 	}
+
 }
 
 func handleCompilerError(err error) {
@@ -1332,19 +1437,20 @@ func (m globalValuesFlag) Set(value string) error {
 
 // parseGoLinkFlag parses the -ldflags parameter. Its primary purpose right now
 // is the -X flag, for setting the value of global string variables.
-func parseGoLinkFlag(flagsString string) (map[string]map[string]string, error) {
+func parseGoLinkFlag(flagsString string) (map[string]map[string]string, string, error) {
 	set := flag.NewFlagSet("link", flag.ExitOnError)
 	globalVarValues := make(globalValuesFlag)
 	set.Var(globalVarValues, "X", "Set the value of the string variable to the given value.")
+	extLDFlags := set.String("extldflags", "", "additional flags to pass to external linker")
 	flags, err := shlex.Split(flagsString)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	err = set.Parse(flags)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return map[string]map[string]string(globalVarValues), nil
+	return map[string]map[string]string(globalVarValues), *extLDFlags, nil
 }
 
 // getListOfPackages returns a standard list of packages for a given list that might
@@ -1394,6 +1500,7 @@ func main() {
 	var tags buildutil.TagsFlag
 	flag.Var(&tags, "tags", "a space-separated list of extra build tags")
 	target := flag.String("target", "", "chip/board name or JSON target specification file")
+	buildMode := flag.String("buildmode", "", "build mode to use (default, c-shared)")
 	var stackSize uint64
 	flag.Func("stack-size", "goroutine stack size (if unknown at compile time)", func(s string) error {
 		size, err := bytesize.Parse(s)
@@ -1463,6 +1570,7 @@ func main() {
 
 	// Early command processing, before commands are interpreted by the Go flag
 	// library.
+	handleChdirFlag()
 	switch command {
 	case "clang", "ld.lld", "wasm-ld":
 		err := builder.RunTool(command, os.Args[2:]...)
@@ -1475,7 +1583,7 @@ func main() {
 	}
 
 	flag.CommandLine.Parse(os.Args[2:])
-	globalVarValues, err := parseGoLinkFlag(*ldflags)
+	globalVarValues, extLDFlags, err := parseGoLinkFlag(*ldflags)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -1501,6 +1609,7 @@ func main() {
 		GOARM:           goenv.Get("GOARM"),
 		GOMIPS:          goenv.Get("GOMIPS"),
 		Target:          *target,
+		BuildMode:       *buildMode,
 		StackSize:       stackSize,
 		Opt:             *opt,
 		GC:              *gc,
@@ -1530,6 +1639,7 @@ func main() {
 		Timeout:         *timeout,
 		WITPackage:      witPackage,
 		WITWorld:        witWorld,
+		ExtLDFlags:      extLDFlags,
 	}
 	if *printCommands {
 		options.PrintCommands = printCommand
@@ -1947,4 +2057,57 @@ func (out *testStderr) Write(data []byte) (int, error) {
 type outputEntry struct {
 	stderr bool
 	data   []byte
+}
+
+// handleChdirFlag handles the -C flag before doing anything else.
+// The -C flag must be the first flag on the command line, to make it easy to find
+// even with commands that have custom flag parsing.
+// handleChdirFlag handles the flag by chdir'ing to the directory
+// and then removing that flag from the command line entirely.
+//
+// We have to handle the -C flag this way for two reasons:
+//
+//  1. Toolchain selection needs to be in the right directory to look for go.mod and go.work.
+//
+//  2. A toolchain switch later on reinvokes the new go command with the same arguments.
+//     The parent toolchain has already done the chdir; the child must not try to do it again.
+
+func handleChdirFlag() {
+	used := 2 // b.c. command at os.Args[1]
+	if used >= len(os.Args) {
+		return
+	}
+
+	var dir string
+	switch a := os.Args[used]; {
+	default:
+		return
+
+	case a == "-C", a == "--C":
+		if used+1 >= len(os.Args) {
+			return
+		}
+		dir = os.Args[used+1]
+		os.Args = slicesDelete(os.Args, used, used+2)
+
+	case strings.HasPrefix(a, "-C="), strings.HasPrefix(a, "--C="):
+		_, dir, _ = strings.Cut(a, "=")
+		os.Args = slicesDelete(os.Args, used, used+1)
+	}
+
+	if err := os.Chdir(dir); err != nil {
+		fmt.Fprintln(os.Stderr, "cannot chdir:", err)
+		os.Exit(1)
+	}
+}
+
+// go1.19 compatibility: lacks slices package
+func slicesDelete[S ~[]E, E any](s S, i, j int) S {
+	_ = s[i:j:len(s)] // bounds check
+
+	if i == j {
+		return s
+	}
+
+	return append(s[:i], s[j:]...)
 }
