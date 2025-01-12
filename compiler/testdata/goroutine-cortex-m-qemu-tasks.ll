@@ -70,7 +70,9 @@ entry:
   %stacksize = call i32 @"internal/task.getGoroutineStackSize"(i32 ptrtoint (ptr @"main.closureFunctionGoroutine$1$gowrapper" to i32), ptr undef) #9
   call void @"internal/task.start"(i32 ptrtoint (ptr @"main.closureFunctionGoroutine$1$gowrapper" to i32), ptr nonnull %0, i32 %stacksize, ptr undef) #9
   %2 = load i32, ptr %n, align 4
+  call void @runtime.printlock(ptr undef) #9
   call void @runtime.printint32(i32 %2, ptr undef) #9
+  call void @runtime.printunlock(ptr undef) #9
   ret void
 }
 
@@ -91,7 +93,11 @@ entry:
   ret void
 }
 
+declare void @runtime.printlock(ptr) #2
+
 declare void @runtime.printint32(i32, ptr) #2
+
+declare void @runtime.printunlock(ptr) #2
 
 ; Function Attrs: nounwind
 define hidden void @main.funcGoroutine(ptr %fn.context, ptr %fn.funcptr, ptr %context) unnamed_addr #1 {
@@ -135,13 +141,13 @@ entry:
 declare i32 @runtime.sliceCopy(ptr nocapture writeonly, ptr nocapture readonly, i32, i32, i32, ptr) #2
 
 ; Function Attrs: nounwind
-define hidden void @main.closeBuiltinGoroutine(ptr dereferenceable_or_null(32) %ch, ptr %context) unnamed_addr #1 {
+define hidden void @main.closeBuiltinGoroutine(ptr dereferenceable_or_null(36) %ch, ptr %context) unnamed_addr #1 {
 entry:
   call void @runtime.chanClose(ptr %ch, ptr undef) #9
   ret void
 }
 
-declare void @runtime.chanClose(ptr dereferenceable_or_null(32), ptr) #2
+declare void @runtime.chanClose(ptr dereferenceable_or_null(36), ptr) #2
 
 ; Function Attrs: nounwind
 define hidden void @main.startInterfaceMethod(ptr %itf.typecode, ptr %itf.value, ptr %context) unnamed_addr #1 {

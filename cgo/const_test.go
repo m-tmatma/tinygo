@@ -59,7 +59,7 @@ func TestParseConst(t *testing.T) {
 	} {
 		fset := token.NewFileSet()
 		startPos := fset.AddFile("", -1, 1000).Pos(0)
-		expr, err := parseConst(startPos, fset, tc.C)
+		expr, err := parseConst(startPos, fset, tc.C, nil, token.NoPos, nil)
 		s := "<invalid>"
 		if err != nil {
 			if !strings.HasPrefix(tc.Go, "error: ") {

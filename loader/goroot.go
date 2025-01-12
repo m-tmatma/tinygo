@@ -243,6 +243,7 @@ func pathsToOverride(goMinor int, needsSyscallPackage bool) map[string]bool {
 		"internal/binary/":            false,
 		"internal/bytealg/":           false,
 		"internal/cm/":                false,
+		"internal/futex/":             false,
 		"internal/fuzz/":              false,
 		"internal/reflectlite/":       false,
 		"internal/gclayout":           false,
@@ -256,6 +257,7 @@ func pathsToOverride(goMinor int, needsSyscallPackage bool) map[string]bool {
 		"runtime/":                    false,
 		"sync/":                       true,
 		"testing/":                    true,
+		"tinygo/":                     false,
 		"unique/":                     false,
 	}
 

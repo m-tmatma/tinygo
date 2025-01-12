@@ -17,6 +17,7 @@ import (
 
 	"github.com/tinygo-org/tinygo/compiler/llvmutil"
 	"github.com/tinygo-org/tinygo/loader"
+	"github.com/tinygo-org/tinygo/src/tinygo"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/types/typeutil"
 	"tinygo.org/x/go-llvm"
@@ -1680,7 +1681,12 @@ func (b *builder) createBuiltin(argTypes []types.Type, argValues []llvm.Value, c
 			result = b.CreateSelect(cmp, result, arg, "")
 		}
 		return result, nil
+	case "panic":
+		// This is rare, but happens in "defer panic()".
+		b.createRuntimeInvoke("_panic", argValues, "")
+		return llvm.Value{}, nil
 	case "print", "println":
+		b.createRuntimeCall("printlock", nil, "")
 		for i, value := range argValues {
 			if i >= 1 && callName == "println" {
 				b.createRuntimeCall("printspace", nil, "")
@@ -1741,6 +1747,7 @@ func (b *builder) createBuiltin(argTypes []types.Type, argValues []llvm.Value, c
 		if callName == "println" {
 			b.createRuntimeCall("printnl", nil, "")
 		}
+		b.createRuntimeCall("printunlock", nil, "")
 		return llvm.Value{}, nil // print() or println() returns void
 	case "real":
 		cplx := argValues[0]
@@ -1865,10 +1872,9 @@ func (b *builder) createFunctionCall(instr *ssa.CallCommon) (llvm.Value, error) 
 			}
 			return llvm.ConstInt(b.ctx.Int1Type(), supportsRecover, false), nil
 		case name == "runtime.panicStrategy":
-			// These constants are defined in src/runtime/panic.go.
 			panicStrategy := map[string]uint64{
-				"print": 1, // panicStrategyPrint
-				"trap":  2, // panicStrategyTrap
+				"print": tinygo.PanicStrategyPrint,
+				"trap":  tinygo.PanicStrategyTrap,
 			}[b.Config.PanicStrategy]
 			return llvm.ConstInt(b.ctx.Int8Type(), panicStrategy, false), nil
 		case name == "runtime/interrupt.New":

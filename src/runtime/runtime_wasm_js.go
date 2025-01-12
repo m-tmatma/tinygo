@@ -32,7 +32,3 @@ func sleepTicks(d timeUnit)
 
 //go:wasmimport gojs runtime.ticks
 func ticks() timeUnit
-
-func beforeExit() {
-	__stdio_exit()
-}

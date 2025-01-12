@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: golang:1.23-alpine
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Install apk dependencies
         # tar: needed for actions/cache@v4
@@ -29,6 +31,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
+      - name: Extract TinyGo version
+        id: version
+        run: ./.github/workflows/tinygo-extract-version.sh | tee -a "$GITHUB_OUTPUT"
       - name: Cache Go
         uses: actions/cache@v4
         with:
@@ -117,15 +122,15 @@ jobs:
       - name: Build TinyGo release
         run: |
           make release deb -j3 STATIC=1
-          cp -p build/release.tar.gz /tmp/tinygo.linux-amd64.tar.gz
-          cp -p build/release.deb    /tmp/tinygo_amd64.deb
+          cp -p build/release.tar.gz /tmp/tinygo${{ steps.version.outputs.version }}.linux-amd64.tar.gz
+          cp -p build/release.deb    /tmp/tinygo_${{ steps.version.outputs.version }}_amd64.deb
       - name: Publish release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-amd64-double-zipped
+          name: linux-amd64-double-zipped-${{ steps.version.outputs.version }}
           path: |
-            /tmp/tinygo.linux-amd64.tar.gz
-            /tmp/tinygo_amd64.deb
+            /tmp/tinygo${{ steps.version.outputs.version }}.linux-amd64.tar.gz
+            /tmp/tinygo_${{ steps.version.outputs.version }}_amd64.deb
   test-linux-build:
     # Test the binaries built in the build-linux job by running the smoke tests.
     runs-on: ubuntu-latest
@@ -149,11 +154,11 @@ jobs:
       - name: Download release artifact
         uses: actions/download-artifact@v4
         with:
-          name: linux-amd64-double-zipped
+          name: linux-amd64-double-zipped-${{ needs.build-linux.outputs.version }}
       - name: Extract release tarball
         run: |
           mkdir -p ~/lib
-          tar -C ~/lib -xf tinygo.linux-amd64.tar.gz
+          tar -C ~/lib -xf tinygo${{ needs.build-linux.outputs.version }}.linux-amd64.tar.gz
           ln -s ~/lib/tinygo/bin/tinygo ~/go/bin/tinygo
       - run: make tinygo-test-wasip1-fast
       - run: make tinygo-test-wasip2-fast
@@ -161,7 +166,7 @@ jobs:
   assert-test-linux:
     # Run all tests that can run on Linux, with LLVM assertions enabled to catch
     # potential bugs.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -294,6 +299,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Get TinyGo version
+        id: version
+        run: ./.github/workflows/tinygo-extract-version.sh | tee -a "$GITHUB_OUTPUT"
       - name: Install apt dependencies
         run: |
           sudo apt-get update
@@ -378,11 +386,11 @@ jobs:
       - name: Download amd64 release
         uses: actions/download-artifact@v4
         with:
-          name: linux-amd64-double-zipped
+          name: linux-amd64-double-zipped-${{ needs.build-linux.outputs.version }}
       - name: Extract amd64 release
         run: |
           mkdir -p build/release
-          tar -xf tinygo.linux-amd64.tar.gz -C build/release tinygo
+          tar -xf tinygo${{ needs.build-linux.outputs.version }}.linux-amd64.tar.gz -C build/release tinygo
       - name: Modify release
         run: |
           cp -p build/tinygo   build/release/tinygo/bin
@@ -390,12 +398,12 @@ jobs:
       - name: Create ${{ matrix.goarch }} release
         run: |
           make release deb RELEASEONLY=1 DEB_ARCH=${{ matrix.libc }}
-          cp -p build/release.tar.gz /tmp/tinygo.linux-${{ matrix.goarch }}.tar.gz
-          cp -p build/release.deb    /tmp/tinygo_${{ matrix.libc }}.deb
+          cp -p build/release.tar.gz /tmp/tinygo${{ steps.version.outputs.version }}.linux-${{ matrix.goarch }}.tar.gz
+          cp -p build/release.deb    /tmp/tinygo_${{ steps.version.outputs.version }}_${{ matrix.libc }}.deb
       - name: Publish release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-${{ matrix.goarch }}-double-zipped
+          name: linux-${{ matrix.goarch }}-double-zipped-${{ steps.version.outputs.version }}
           path: |
-            /tmp/tinygo.linux-${{ matrix.goarch }}.tar.gz
-            /tmp/tinygo_${{ matrix.libc }}.deb
+            /tmp/tinygo${{ steps.version.outputs.version }}.linux-${{ matrix.goarch }}.tar.gz
+            /tmp/tinygo_${{ steps.version.outputs.version }}_${{ matrix.libc }}.deb

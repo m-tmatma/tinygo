@@ -291,7 +291,7 @@ endif
 
 tinygo: ## Build the TinyGo compiler
 	@if [ ! -f "$(LLVM_BUILDDIR)/bin/llvm-config" ]; then echo "Fetch and build LLVM first by running:"; echo "  $(MAKE) llvm-source"; echo "  $(MAKE) $(LLVM_BUILDDIR)"; exit 1; fi
-	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GOENVFLAGS) $(GO) build -buildmode exe -o build/tinygo$(EXE) -tags "byollvm osusergo" -ldflags="-X github.com/tinygo-org/tinygo/goenv.GitSha1=`git rev-parse --short HEAD`" .
+	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GOENVFLAGS) $(GO) build -buildmode exe -o build/tinygo$(EXE) -tags "byollvm osusergo" .
 test: wasi-libc check-nodejs-version
 	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GO) test $(GOTESTFLAGS) -timeout=1h -buildmode exe -tags "byollvm osusergo" $(GOTESTPKGS)
 
@@ -741,6 +741,10 @@ endif
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=thumby              examples/echo
 	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=pico2               examples/blinky1
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=tiny2350            examples/blinky1
+	@$(MD5SUM) test.hex
 	# test pwm
 	$(TINYGO) build -size short -o test.hex -target=itsybitsy-m0        examples/pwm
 	@$(MD5SUM) test.hex
@@ -853,6 +857,8 @@ endif
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=maixbit             examples/blinky1
 	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=tkey                examples/blinky1
+	@$(MD5SUM) test.hex
 ifneq ($(WASM), 0)
 	$(TINYGO) build -size short -o wasm.wasm -target=wasm               examples/wasm/export
 	$(TINYGO) build -size short -o wasm.wasm -target=wasm               examples/wasm/main
@@ -867,7 +873,7 @@ endif
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=pca10040 -serial=rtt examples/echo
 	@$(MD5SUM) test.hex
-	$(TINYGO) build             -o test.nro -target=nintendoswitch      examples/serial
+	$(TINYGO) build             -o test.nro -target=nintendoswitch      examples/echo2
 	@$(MD5SUM) test.nro
 	$(TINYGO) build -size short -o test.hex -target=pca10040 -opt=0     ./testdata/stdlib.go
 	@$(MD5SUM) test.hex
@@ -926,6 +932,7 @@ endif
 	@cp -rp lib/musl/src/env             build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/errno           build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/exit            build/release/tinygo/lib/musl/src
+	@cp -rp lib/musl/src/fcntl           build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/include         build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/internal        build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/legacy          build/release/tinygo/lib/musl/src
@@ -934,6 +941,7 @@ endif
 	@cp -rp lib/musl/src/malloc          build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/mman            build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/math            build/release/tinygo/lib/musl/src
+	@cp -rp lib/musl/src/misc            build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/multibyte       build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/signal          build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/stdio           build/release/tinygo/lib/musl/src
@@ -941,6 +949,7 @@ endif
 	@cp -rp lib/musl/src/thread          build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/time            build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/unistd          build/release/tinygo/lib/musl/src
+	@cp -rp lib/musl/src/process         build/release/tinygo/lib/musl/src
 	@cp -rp lib/mingw-w64/mingw-w64-crt/def-include                 build/release/tinygo/lib/mingw-w64/mingw-w64-crt
 	@cp -rp lib/mingw-w64/mingw-w64-crt/lib-common/api-ms-win-crt-* build/release/tinygo/lib/mingw-w64/mingw-w64-crt/lib-common
 	@cp -rp lib/mingw-w64/mingw-w64-crt/lib-common/kernel32.def.in  build/release/tinygo/lib/mingw-w64/mingw-w64-crt/lib-common

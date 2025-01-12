@@ -46,6 +46,7 @@ type TargetSpec struct {
 	LinkerScript     string   `json:"linkerscript,omitempty"`
 	ExtraFiles       []string `json:"extra-files,omitempty"`
 	RP2040BootPatch  *bool    `json:"rp2040-boot-patch,omitempty"` // Patch RP2040 2nd stage bootloader checksum
+	BootPatches      []string `json:"boot-patches,omitempty"`      // Bootloader patches to be applied in the order they appear.
 	Emulator         string   `json:"emulator,omitempty"`
 	FlashCommand     string   `json:"flash-command,omitempty"`
 	GDB              []string `json:"gdb,omitempty"`
@@ -390,6 +391,7 @@ func defaultTarget(options *Options) (*TargetSpec, error) {
 			"-platform_version", "macos", platformVersion, platformVersion,
 		)
 		spec.ExtraFiles = append(spec.ExtraFiles,
+			"src/internal/futex/futex_darwin.c",
 			"src/runtime/os_darwin.c",
 			"src/runtime/runtime_unix.c",
 			"src/runtime/signal.c")
@@ -413,6 +415,7 @@ func defaultTarget(options *Options) (*TargetSpec, error) {
 			spec.CFlags = append(spec.CFlags, "-mno-outline-atomics")
 		}
 		spec.ExtraFiles = append(spec.ExtraFiles,
+			"src/internal/futex/futex_linux.c",
 			"src/runtime/runtime_unix.c",
 			"src/runtime/signal.c")
 	case "windows":
@@ -452,7 +455,7 @@ func defaultTarget(options *Options) (*TargetSpec, error) {
 			"--stack-first",
 			"--no-demangle",
 		)
-		spec.Emulator = "wasmtime --dir={tmpDir}::/tmp {}"
+		spec.Emulator = "wasmtime run --dir={tmpDir}::/tmp {}"
 		spec.ExtraFiles = append(spec.ExtraFiles,
 			"src/runtime/asm_tinygowasm.S",
 			"src/internal/task/task_asyncify_wasm.S",

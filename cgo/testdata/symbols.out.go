@@ -1,5 +1,6 @@
 package main
 
+import "syscall"
 import "unsafe"
 
 var _ unsafe.Pointer
@@ -29,6 +30,13 @@ func C.__CBytes([]byte) unsafe.Pointer
 
 func C.CBytes(b []byte) unsafe.Pointer {
 	return C.__CBytes(b)
+}
+
+//go:linkname C.__get_errno_num runtime.cgo_errno
+func C.__get_errno_num() uintptr
+
+func C.__get_errno() error {
+	return syscall.Errno(C.__get_errno_num())
 }
 
 type (
@@ -67,5 +75,10 @@ func C.staticfunc!symbols.go(x C.int)
 
 var C.staticfunc!symbols.go$funcaddr unsafe.Pointer
 
+//export notEscapingFunction
+//go:noescape
+func C.notEscapingFunction(a *C.int)
+
+var C.notEscapingFunction$funcaddr unsafe.Pointer
 //go:extern someValue
 var C.someValue C.int

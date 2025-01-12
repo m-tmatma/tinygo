@@ -4,27 +4,35 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"strings"
 )
 
 // Version of TinyGo.
 // Update this value before release of new version of software.
-const version = "0.34.0"
-
-var (
-	// This variable is set at build time using -ldflags parameters.
-	// See: https://stackoverflow.com/a/11355611
-	GitSha1 string
-)
+const version = "0.35.0"
 
 // Return TinyGo version, either in the form 0.30.0 or as a development version
 // (like 0.30.0-dev-abcd012).
 func Version() string {
 	v := version
-	if strings.HasSuffix(version, "-dev") && GitSha1 != "" {
-		v += "-" + GitSha1
+	if strings.HasSuffix(version, "-dev") {
+		if hash := readGitHash(); hash != "" {
+			v += "-" + hash
+		}
 	}
 	return v
+}
+
+func readGitHash() string {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.revision" {
+				return setting.Value[:8]
+			}
+		}
+	}
+	return ""
 }
 
 // GetGorootVersion returns the major and minor version for a given GOROOT path.
@@ -42,6 +50,9 @@ func GetGorootVersion() (major, minor int, err error) {
 // major, minor, and patch version: 1, 3, and 2 in this example.
 // If there is an error, (0, 0, 0) and an error will be returned.
 func Parse(version string) (major, minor, patch int, err error) {
+	if strings.HasPrefix(version, "devel ") {
+		version = strings.Split(strings.TrimPrefix(version, "devel "), version)[0]
+	}
 	if version == "" || version[:2] != "go" {
 		return 0, 0, 0, errors.New("could not parse Go version: version does not start with 'go' prefix")
 	}

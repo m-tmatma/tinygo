@@ -1,4 +1,6 @@
-//go:build wasip1 || wasip2
+//go:build js || wasip1 || wasip2
+
+// Note: also including js in here because it also uses wasi-libc.
 
 package syscall
 

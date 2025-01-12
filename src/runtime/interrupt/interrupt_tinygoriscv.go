@@ -1,4 +1,4 @@
-//go:build tinygo.riscv
+//go:build tinygo.riscv && !tkey
 
 package interrupt
 

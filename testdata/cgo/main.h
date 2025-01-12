@@ -1,5 +1,6 @@
 #include <stdbool.h>
 #include <stdint.h>
+#include <errno.h>
 
 typedef short myint;
 typedef short unusedTypedef;
@@ -154,3 +155,5 @@ void arraydecay(int buf1[5], int buf2[3][8], arraydecay_buf3 buf3);
 double doSqrt(double);
 
 void printf_single_int(char *format, int arg);
+
+int set_errno(int err);

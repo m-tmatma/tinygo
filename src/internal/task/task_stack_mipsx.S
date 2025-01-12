@@ -1,3 +1,7 @@
+// Do not reorder instructions to insert a branch delay slot.
+// We know what we're doing, and will manually fill the branch delay slot.
+.set noreorder
+
 .section .text.tinygo_startTask
 .global  tinygo_startTask
 .type    tinygo_startTask, %function

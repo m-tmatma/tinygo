@@ -76,6 +76,13 @@ const (
 	blockStateMask blockState = 3 // 11
 )
 
+// The byte value of a block where every block is a 'tail' block.
+const blockStateByteAllTails = 0 |
+	uint8(blockStateTail<<(stateBits*3)) |
+	uint8(blockStateTail<<(stateBits*2)) |
+	uint8(blockStateTail<<(stateBits*1)) |
+	uint8(blockStateTail<<(stateBits*0))
+
 // String returns a human-readable version of the block state, for debugging.
 func (s blockState) String() string {
 	switch s {
@@ -123,7 +130,25 @@ func (b gcBlock) address() uintptr {
 // points to an allocated object. It returns the same block if this block
 // already points to the head.
 func (b gcBlock) findHead() gcBlock {
-	for b.state() == blockStateTail {
+	for {
+		// Optimization: check whether the current block state byte (which
+		// contains the state of multiple blocks) is composed entirely of tail
+		// blocks. If so, we can skip back to the last block in the previous
+		// state byte.
+		// This optimization speeds up findHead for pointers that point into a
+		// large allocation.
+		stateByte := b.stateByte()
+		if stateByte == blockStateByteAllTails {
+			b -= (b % blocksPerStateByte) + 1
+			continue
+		}
+
+		// Check whether we've found a non-tail block, which means we found the
+		// head.
+		state := b.stateFromByte(stateByte)
+		if state != blockStateTail {
+			break
+		}
 		b--
 	}
 	if gcAsserts {
@@ -146,10 +171,19 @@ func (b gcBlock) findNext() gcBlock {
 	return b
 }
 
+func (b gcBlock) stateByte() byte {
+	return *(*uint8)(unsafe.Add(metadataStart, b/blocksPerStateByte))
+}
+
+// Return the block state given a state byte. The state byte must have been
+// obtained using b.stateByte(), otherwise the result is incorrect.
+func (b gcBlock) stateFromByte(stateByte byte) blockState {
+	return blockState(stateByte>>((b%blocksPerStateByte)*stateBits)) & blockStateMask
+}
+
 // State returns the current block state.
 func (b gcBlock) state() blockState {
-	stateBytePtr := (*uint8)(unsafe.Add(metadataStart, b/blocksPerStateByte))
-	return blockState(*stateBytePtr>>((b%blocksPerStateByte)*stateBits)) & blockStateMask
+	return b.stateFromByte(b.stateByte())
 }
 
 // setState sets the current block to the given state, which must contain more
@@ -430,12 +464,13 @@ func runGC() (freeBytes uintptr) {
 		// Therefore we need to scan the runqueue separately.
 		var markedTaskQueue task.Queue
 	runqueueScan:
+		runqueue := schedulerRunQueue()
 		for !runqueue.Empty() {
 			// Pop the next task off of the runqueue.
 			t := runqueue.Pop()
 
 			// Mark the task if it has not already been marked.
-			markRoot(uintptr(unsafe.Pointer(&runqueue)), uintptr(unsafe.Pointer(t)))
+			markRoot(uintptr(unsafe.Pointer(runqueue)), uintptr(unsafe.Pointer(t)))
 
 			// Push the task onto our temporary queue.
 			markedTaskQueue.Push(t)
@@ -450,7 +485,7 @@ func runGC() (freeBytes uintptr) {
 			interrupt.Restore(i)
 			goto runqueueScan
 		}
-		runqueue = markedTaskQueue
+		*runqueue = markedTaskQueue
 		interrupt.Restore(i)
 	} else {
 		finishMark()

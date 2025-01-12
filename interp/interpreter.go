@@ -287,9 +287,17 @@ func (r *runner) run(fn *function, params []value, parentMem *memoryView, indent
 				// Get the object layout, if it is available.
 				llvmLayoutType := r.getLLVMTypeFromLayout(operands[2])
 
+				// Get the alignment of the memory to be allocated.
+				alignment := 0 // use default alignment if unset
+				alignAttr := inst.llvmInst.GetCallSiteEnumAttribute(0, llvm.AttributeKindID("align"))
+				if !alignAttr.IsNil() {
+					alignment = int(alignAttr.GetEnumValue())
+				}
+
 				// Create the object.
 				alloc := object{
 					globalName:     r.pkgName + "$alloc",
+					align:          alignment,
 					llvmLayoutType: llvmLayoutType,
 					buffer:         newRawValue(uint32(size)),
 					size:           uint32(size),
@@ -646,6 +654,7 @@ func (r *runner) run(fn *function, params []value, parentMem *memoryView, indent
 				globalName: r.pkgName + "$alloca",
 				buffer:     newRawValue(uint32(size)),
 				size:       uint32(size),
+				align:      inst.llvmInst.Alignment(),
 			}
 			index := len(r.objects)
 			r.objects = append(r.objects, alloca)

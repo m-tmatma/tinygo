@@ -52,6 +52,3 @@ func sleepTicks(d timeUnit) {
 func ticks() timeUnit {
 	return timeUnit(monotonicclock.Now())
 }
-
-func beforeExit() {
-}

@@ -1,3 +1,7 @@
+// Do not reorder instructions to insert a branch delay slot.
+// We know what we're doing, and will manually fill the branch delay slot.
+.set noreorder
+
 .section .text.tinygo_scanCurrentStack
 .global  tinygo_scanCurrentStack
 .type    tinygo_scanCurrentStack, %function

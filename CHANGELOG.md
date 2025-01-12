@@ -1,3 +1,71 @@
+0.35.0
+---
+* **general**
+  - update cmsis-svd library
+  - use default UART settings in the echo example
+  - `goenv`: also show git hash with custom build of TinyGo
+  - `goenv`: support parsing development versions of Go
+  - `main`: parse extldflags early so we can report the error message
+* **compiler**
+  - `builder`: whitelist temporary directory env var for Clang invocation to fix Windows bug
+  - `builder`: fix cache paths in `-size=full` output
+  - `builder`: work around incorrectly escaped DWARF paths on Windows (Clang bug)
+  - `builder`: fix wasi-libc path names on Windows with `-size=full`
+  - `builder`: write HTML size report
+  - `cgo`: support C identifiers only referred to from within macros
+  - `cgo`: support function-like macros
+  - `cgo`: support errno value as second return parameter
+  - `cgo`: add support for `#cgo noescape` lines
+  - `compiler`: fix bug in interrupt lowering
+  - `compiler`: allow panic directly in `defer`
+  - `compiler`: fix wasmimport -> wasmexport in error message
+  - `compiler`: support `//go:noescape` pragma
+  - `compiler`: report error instead of crashing when instantiating a generic function without body
+  - `interp`: align created globals
+* **standard library**
+  - `machine`: modify i2s interface/implementation to better match specification
+  - `os`: implement `StartProcess`
+  - `reflect`: add `Value.Clear`
+  - `reflect`: add interface support to `NumMethods`
+  - `reflect`: fix `AssignableTo` for named + non-named types
+  - `reflect`: implement `CanConvert`
+  - `reflect`: handle more cases in `Convert`
+  - `reflect`: fix Copy of non-pointer array with size > 64bits
+  - `runtime`: don't call sleepTicks with a negative duration
+  - `runtime`: optimize GC scanning (findHead)
+  - `runtime`: move constants into shared package
+  - `runtime`: add `runtime.fcntl` function for internal/syscall/unix
+  - `runtime`: heapptr only needs to be initialized once
+  - `runtime`: refactor scheduler (this fixes a few bugs with `-scheduler=none`)
+  - `runtime`: rewrite channel implementation to be smaller and more flexible
+  - `runtime`: use `SA_RESTART` when registering a signal for os/signal
+  - `runtime`: implement race-free signals using futexes
+  - `runtime`: run deferred functions in `Goexit`
+  - `runtime`: remove `Cond` which seems to be unused
+  - `runtime`: properly handle unix read on directory
+  - `runtime/trace`: stub all public methods
+  - `sync`: don't use volatile in `Mutex`
+  - `sync`: implement `WaitGroup` using a (pseudo)futex
+  - `sync`: make `Cond` parallelism-safe
+  - `syscall`: use wasi-libc tables for wasm/js target
+* **targets**
+  - `mips`: fix a bug when scanning the stack
+  - `nintendoswitch`: get this target to compile again
+  - `rp2350`: add support for the new RP2350
+  - `rp2040/rp2350` : make I2C implementation shared for rp2040/rp2350
+  - `rp2040/rp2350` : make SPI implementation shared for rp2040/rp2350
+  - `rp2040/rp2350` : make RNG implementation shared for rp2040/rp2350
+  - `wasm`: revise and simplify wasmtime argument handling
+  - `wasm`: support `//go:wasmexport` functions after a call to `time.Sleep`
+  - `wasm`: correctly return from run() in wasm_exec.js
+  - `wasm`: call process.exit() when go.run() returns
+  - `windows`: don't return, exit via exit(0) instead to flush stdout buffer
+* **boards**
+  - add support for the Tillitis TKey
+  - add support for the Raspberry Pi Pico2 (based on the RP2040)
+  - add support for Pimoroni Tiny2350
+
+
 0.34.0
 ---
 * **general**

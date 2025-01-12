@@ -91,10 +91,6 @@ func ticks() timeUnit {
 	return timeUnit(nano)
 }
 
-func beforeExit() {
-	__stdio_exit()
-}
-
 // Implementations of WASI APIs
 
 //go:wasmimport wasi_snapshot_preview1 args_get

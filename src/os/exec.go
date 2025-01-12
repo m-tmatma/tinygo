@@ -5,6 +5,12 @@ import (
 	"syscall"
 )
 
+var (
+	ErrNotImplementedDir   = errors.New("directory setting not implemented")
+	ErrNotImplementedSys   = errors.New("sys setting not implemented")
+	ErrNotImplementedFiles = errors.New("files setting not implemented")
+)
+
 type Signal interface {
 	String() string
 	Signal() // to distinguish from other Stringers
@@ -47,6 +53,10 @@ func (p *ProcessState) Sys() interface{} {
 	return nil // TODO
 }
 
+func (p *ProcessState) Exited() bool {
+	return false // TODO
+}
+
 // ExitCode returns the exit code of the exited process, or -1
 // if the process hasn't exited or was terminated by a signal.
 func (p *ProcessState) ExitCode() int {
@@ -57,8 +67,10 @@ type Process struct {
 	Pid int
 }
 
+// StartProcess starts a new process with the program, arguments and attributes specified by name, argv and attr.
+// Arguments to the process (os.Args) are passed via argv.
 func StartProcess(name string, argv []string, attr *ProcAttr) (*Process, error) {
-	return nil, &PathError{Op: "fork/exec", Path: name, Err: ErrNotImplemented}
+	return startProcess(name, argv, attr)
 }
 
 func (p *Process) Wait() (*ProcessState, error) {

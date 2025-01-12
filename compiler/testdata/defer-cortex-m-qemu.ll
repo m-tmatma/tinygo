@@ -3,7 +3,7 @@ source_filename = "defer.go"
 target datalayout = "e-m:e-p:32:32-Fi8-i64:64-v128:64:128-a:0:32-n32-S64"
 target triple = "thumbv7m-unknown-unknown-eabi"
 
-%runtime.deferFrame = type { ptr, ptr, [0 x ptr], ptr, i1, %runtime._interface }
+%runtime.deferFrame = type { ptr, ptr, [0 x ptr], ptr, i8, %runtime._interface }
 %runtime._interface = type { ptr, ptr }
 %runtime._defer = type { i32, ptr }
 
@@ -122,11 +122,17 @@ declare void @runtime.destroyDeferFrame(ptr dereferenceable_or_null(24), ptr) #2
 ; Function Attrs: nounwind
 define internal void @"main.deferSimple$1"(ptr %context) unnamed_addr #1 {
 entry:
+  call void @runtime.printlock(ptr undef) #4
   call void @runtime.printint32(i32 3, ptr undef) #4
+  call void @runtime.printunlock(ptr undef) #4
   ret void
 }
 
+declare void @runtime.printlock(ptr) #2
+
 declare void @runtime.printint32(i32, ptr) #2
+
+declare void @runtime.printunlock(ptr) #2
 
 ; Function Attrs: nounwind
 define hidden void @main.deferMultiple(ptr %context) unnamed_addr #1 {
@@ -250,14 +256,18 @@ rundefers.end7:                                   ; preds = %rundefers.loophead1
 ; Function Attrs: nounwind
 define internal void @"main.deferMultiple$1"(ptr %context) unnamed_addr #1 {
 entry:
+  call void @runtime.printlock(ptr undef) #4
   call void @runtime.printint32(i32 3, ptr undef) #4
+  call void @runtime.printunlock(ptr undef) #4
   ret void
 }
 
 ; Function Attrs: nounwind
 define internal void @"main.deferMultiple$2"(ptr %context) unnamed_addr #1 {
 entry:
+  call void @runtime.printlock(ptr undef) #4
   call void @runtime.printint32(i32 5, ptr undef) #4
+  call void @runtime.printunlock(ptr undef) #4
   ret void
 }
 

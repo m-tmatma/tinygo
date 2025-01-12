@@ -56,7 +56,7 @@ func TestCGo(t *testing.T) {
 			}
 
 			// Process the AST with CGo.
-			cgoFiles, _, _, _, _, cgoErrors := Process([]*ast.File{f}, "testdata", "main", fset, cflags)
+			cgoFiles, _, _, _, _, cgoErrors := Process([]*ast.File{f}, "testdata", "main", fset, cflags, "linux")
 
 			// Check the AST for type errors.
 			var typecheckErrors []error
@@ -64,7 +64,7 @@ func TestCGo(t *testing.T) {
 				Error: func(err error) {
 					typecheckErrors = append(typecheckErrors, err)
 				},
-				Importer: simpleImporter{},
+				Importer: newSimpleImporter(),
 				Sizes:    types.SizesFor("gccgo", "arm"),
 			}
 			_, err = config.Check("", fset, append([]*ast.File{f}, cgoFiles...), nil)
@@ -202,14 +202,33 @@ func Test_cgoPackage_isEquivalentAST(t *testing.T) {
 }
 
 // simpleImporter implements the types.Importer interface, but only allows
-// importing the unsafe package.
+// importing the syscall and unsafe packages.
 type simpleImporter struct {
+	syscallPkg *types.Package
+}
+
+func newSimpleImporter() *simpleImporter {
+	i := &simpleImporter{}
+
+	// Implement a dummy syscall package with the Errno type.
+	i.syscallPkg = types.NewPackage("syscall", "syscall")
+	obj := types.NewTypeName(token.NoPos, i.syscallPkg, "Errno", nil)
+	named := types.NewNamed(obj, nil, nil)
+	i.syscallPkg.Scope().Insert(obj)
+	named.SetUnderlying(types.Typ[types.Uintptr])
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(types.NewParam(token.NoPos, i.syscallPkg, "", types.Typ[types.String])), false)
+	named.AddMethod(types.NewFunc(token.NoPos, i.syscallPkg, "Error", sig))
+	i.syscallPkg.MarkComplete()
+
+	return i
 }
 
 // Import implements the Importer interface. For testing usage only: it only
 // supports importing the unsafe package.
-func (i simpleImporter) Import(path string) (*types.Package, error) {
+func (i *simpleImporter) Import(path string) (*types.Package, error) {
 	switch path {
+	case "syscall":
+		return i.syscallPkg, nil
 	case "unsafe":
 		return types.Unsafe, nil
 	default:

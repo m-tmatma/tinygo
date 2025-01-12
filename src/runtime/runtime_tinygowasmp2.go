@@ -60,6 +60,13 @@ func syscall_Exit(code int) {
 	exit.Exit(code != 0)
 }
 
+func mainReturnExit() {
+	// WASIp2 does not use _start, instead it uses _initialize and a custom
+	// WASIp2-specific main function. So this should never be called in
+	// practice.
+	runtimePanic("unreachable: _start was called")
+}
+
 // TinyGo does not yet support any form of parallelism on WebAssembly, so these
 // can be left empty.
 
@@ -73,4 +80,10 @@ func procUnpin() {
 
 func hardwareRand() (n uint64, ok bool) {
 	return random.GetRandomU64(), true
+}
+
+func libc_errno_location() *int32 {
+	// CGo is unavailable, so this function should be unreachable.
+	runtimePanic("runtime: no cgo errno")
+	return nil
 }

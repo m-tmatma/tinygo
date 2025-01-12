@@ -14,18 +14,22 @@ import (
 // This is the _start entry point, when using -buildmode=default.
 func wasmEntryCommand() {
 	// These need to be initialized early so that the heap can be initialized.
+	initializeCalled = true
 	heapStart = uintptr(unsafe.Pointer(&heapStartSymbol))
 	heapEnd = uintptr(wasm_memory_size(0) * wasmPageSize)
-	wasmExportState = wasmExportStateInMain
 	run()
-	wasmExportState = wasmExportStateExited
-	beforeExit()
+	if mainExited {
+		// To make sure wasm_exec.js knows that we've exited, exit explicitly.
+		mainReturnExit()
+	}
 }
 
 // This is the _initialize entry point, when using -buildmode=c-shared.
 func wasmEntryReactor() {
 	// This function is called before any //go:wasmexport functions are called
 	// to initialize everything. It must not block.
+
+	initializeCalled = true
 
 	// Initialize the heap.
 	heapStart = uintptr(unsafe.Pointer(&heapStartSymbol))
@@ -38,38 +42,23 @@ func wasmEntryReactor() {
 		// goroutine.
 		go func() {
 			initAll()
-			wasmExportState = wasmExportStateReactor
 		}()
 		scheduler(true)
-		if wasmExportState != wasmExportStateReactor {
-			// Unlikely, but if package initializers do something blocking (like
-			// time.Sleep()), that's a bug.
-			runtimePanic("package initializer blocks")
-		}
 	} else {
 		// There are no goroutines (except for the main one, if you can call it
 		// that), so we can just run all the package initializers.
 		initAll()
-		wasmExportState = wasmExportStateReactor
 	}
 }
 
-// Track which state we're in: before (or during) init, running inside
-// main.main, after main.main returned, or reactor mode (after init).
-var wasmExportState uint8
-
-const (
-	wasmExportStateInit = iota
-	wasmExportStateInMain
-	wasmExportStateExited
-	wasmExportStateReactor
-)
+// Whether the runtime was initialized by a call to _initialize or _start.
+var initializeCalled bool
 
 func wasmExportCheckRun() {
-	switch wasmExportState {
-	case wasmExportStateInit:
+	switch {
+	case !initializeCalled:
 		runtimePanic("//go:wasmexport function called before runtime initialization")
-	case wasmExportStateExited:
+	case mainExited:
 		runtimePanic("//go:wasmexport function called after main.main returned")
 	}
 }

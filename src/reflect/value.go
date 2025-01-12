@@ -689,6 +689,25 @@ func (v Value) Cap() int {
 	}
 }
 
+//go:linkname mapclear runtime.hashmapClear
+func mapclear(p unsafe.Pointer)
+
+// Clear clears the contents of a map or zeros the contents of a slice
+//
+// It panics if v's Kind is not Map or Slice.
+func (v Value) Clear() {
+	switch v.typecode.Kind() {
+	case Map:
+		mapclear(v.pointer())
+	case Slice:
+		hdr := (*sliceHeader)(v.value)
+		elemSize := v.typecode.underlying().elem().Size()
+		memzero(hdr.data, elemSize*hdr.len)
+	default:
+		panic(&ValueError{Method: "Clear", Kind: v.Kind()})
+	}
+}
+
 // NumField returns the number of fields of this struct. It panics for other
 // value types.
 func (v Value) NumField() int {
@@ -888,6 +907,9 @@ func (v Value) Index(i int) Value {
 }
 
 func (v Value) NumMethod() int {
+	if v.typecode == nil {
+		panic(&ValueError{Method: "reflect.Value.NumMethod", Kind: Invalid})
+	}
 	return v.typecode.NumMethod()
 }
 
@@ -1062,7 +1084,7 @@ func (v Value) Set(x Value) {
 	v.checkAddressable()
 	v.checkRO()
 	if !x.typecode.AssignableTo(v.typecode) {
-		panic("reflect: cannot set")
+		panic("reflect.Value.Set: value of type " + x.typecode.String() + " cannot be assigned to type " + v.typecode.String())
 	}
 
 	if v.typecode.Kind() == Interface && x.typecode.Kind() != Interface {
@@ -1240,7 +1262,9 @@ func (v Value) OverflowUint(x uint64) bool {
 }
 
 func (v Value) CanConvert(t Type) bool {
-	panic("unimplemented: (reflect.Value).CanConvert()")
+	// TODO: Optimize this to not actually perform a conversion
+	_, ok := convertOp(v, t)
+	return ok
 }
 
 func (v Value) Convert(t Type) Value {
@@ -1259,6 +1283,15 @@ func convertOp(src Value, typ Type) (Value, bool) {
 			typecode: typ.(*rawType),
 			value:    src.value,
 			flags:    src.flags,
+		}, true
+	}
+
+	if rtype := typ.(*rawType); rtype.Kind() == Interface && rtype.NumMethod() == 0 {
+		iface := composeInterface(unsafe.Pointer(src.typecode), src.value)
+		return Value{
+			typecode: rtype,
+			value:    unsafe.Pointer(&iface),
+			flags:    valueFlagExported,
 		}, true
 	}
 
@@ -1302,14 +1335,33 @@ func convertOp(src Value, typ Type) (Value, bool) {
 		*/
 
 	case Slice:
-		if typ.Kind() == String && !src.typecode.elem().isNamed() {
-			rtype := typ.(*rawType)
-
-			switch src.Type().Elem().Kind() {
-			case Uint8:
-				return cvtBytesString(src, rtype), true
-			case Int32:
-				return cvtRunesString(src, rtype), true
+		switch rtype := typ.(*rawType); rtype.Kind() {
+		case Array:
+			if src.typecode.elem() == rtype.elem() && rtype.Len() <= src.Len() {
+				return Value{
+					typecode: rtype,
+					value:    (*sliceHeader)(src.value).data,
+					flags:    src.flags | valueFlagIndirect,
+				}, true
+			}
+		case Pointer:
+			if rtype.Elem().Kind() == Array {
+				if src.typecode.elem() == rtype.elem().elem() && rtype.elem().Len() <= src.Len() {
+					return Value{
+						typecode: rtype,
+						value:    (*sliceHeader)(src.value).data,
+						flags:    src.flags & (valueFlagExported | valueFlagRO),
+					}, true
+				}
+			}
+		case String:
+			if !src.typecode.elem().isNamed() {
+				switch src.Type().Elem().Kind() {
+				case Uint8:
+					return cvtBytesString(src, rtype), true
+				case Int32:
+					return cvtRunesString(src, rtype), true
+				}
 			}
 		}
 
@@ -1660,7 +1712,7 @@ func buflen(v Value) (unsafe.Pointer, uintptr) {
 		buf = hdr.data
 		len = hdr.len
 	case Array:
-		if v.isIndirect() {
+		if v.isIndirect() || v.typecode.Size() > unsafe.Sizeof(uintptr(0)) {
 			buf = v.value
 		} else {
 			buf = unsafe.Pointer(&v.value)

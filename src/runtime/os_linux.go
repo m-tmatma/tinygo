@@ -5,7 +5,9 @@ package runtime
 // This file is for systems that are _actually_ Linux (not systems that pretend
 // to be Linux, like baremetal systems).
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 const GOOS = "linux"
 
@@ -83,6 +85,11 @@ type elfProgramHeader32 struct {
 //go:extern __ehdr_start
 var ehdr_start elfHeader
 
+// int *__errno_location(void);
+//
+//export __errno_location
+func libc_errno_location() *int32
+
 // findGlobals finds globals in the .data/.bss sections.
 // It parses the ELF program header to find writable segments.
 func findGlobals(found func(start, end uintptr)) {
@@ -139,3 +146,14 @@ func hardwareRand() (n uint64, ok bool) {
 //
 //export getrandom
 func libc_getrandom(buf unsafe.Pointer, buflen uintptr, flags uint32) uint32
+
+// int fcntl(int fd, int cmd, int arg);
+//
+//export fcntl
+func libc_fcntl(fd int, cmd int, arg int) (ret int)
+
+func fcntl(fd int32, cmd int32, arg int32) (ret int32, errno int32) {
+	ret = int32(libc_fcntl(int(fd), int(cmd), int(arg)))
+	errno = *libc_errno_location()
+	return
+}

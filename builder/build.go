@@ -61,6 +61,10 @@ type BuildResult struct {
 	// correctly printing test results: the import path isn't always the same as
 	// the path listed on the command line.
 	ImportPath string
+
+	// Map from path to package name. It is needed to attribute binary size to
+	// the right Go package.
+	PackagePathMap map[string]string
 }
 
 // packageAction is the struct that is serialized to JSON and hashed, to work as
@@ -240,6 +244,12 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 	err = lprogram.Parse()
 	if err != nil {
 		return result, err
+	}
+
+	// Store which filesystem paths map to which package name.
+	result.PackagePathMap = make(map[string]string, len(lprogram.Packages))
+	for _, pkg := range lprogram.Sorted() {
+		result.PackagePathMap[pkg.OriginalDir()] = pkg.Pkg.Path()
 	}
 
 	// Create the *ssa.Program. This does not yet build the entire SSA of the
@@ -690,7 +700,7 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 	for _, pkg := range lprogram.Sorted() {
 		pkg := pkg
 		for _, filename := range pkg.CFiles {
-			abspath := filepath.Join(pkg.Dir, filename)
+			abspath := filepath.Join(pkg.OriginalDir(), filename)
 			job := &compileJob{
 				description: "compile CGo file " + abspath,
 				run: func(job *compileJob) error {
@@ -812,6 +822,12 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 					return fmt.Errorf("could not modify stack sizes: %w", err)
 				}
 			}
+
+			// Apply patches of bootloader in the order they appear.
+			if len(config.Target.BootPatches) > 0 {
+				err = applyPatches(result.Executable, config.Target.BootPatches)
+			}
+
 			if config.RP2040BootPatch() {
 				// Patch the second stage bootloader CRC into the .boot2 section
 				err = patchRP2040BootCRC(result.Executable)
@@ -915,19 +931,16 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 			}
 
 			// Print code size if requested.
-			if config.Options.PrintSizes == "short" || config.Options.PrintSizes == "full" {
-				packagePathMap := make(map[string]string, len(lprogram.Packages))
-				for _, pkg := range lprogram.Sorted() {
-					packagePathMap[pkg.OriginalDir()] = pkg.Pkg.Path()
-				}
-				sizes, err := loadProgramSize(result.Executable, packagePathMap)
+			if config.Options.PrintSizes != "" {
+				sizes, err := loadProgramSize(result.Executable, result.PackagePathMap)
 				if err != nil {
 					return err
 				}
-				if config.Options.PrintSizes == "short" {
+				switch config.Options.PrintSizes {
+				case "short":
 					fmt.Printf("   code    data     bss |   flash     ram\n")
 					fmt.Printf("%7d %7d %7d | %7d %7d\n", sizes.Code+sizes.ROData, sizes.Data, sizes.BSS, sizes.Flash(), sizes.RAM())
-				} else {
+				case "full":
 					if !config.Debug() {
 						fmt.Println("warning: data incomplete, remove the -no-debug flag for more detail")
 					}
@@ -939,6 +952,13 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 					}
 					fmt.Printf("------------------------------- | --------------- | -------\n")
 					fmt.Printf("%7d %7d %7d %7d | %7d %7d | total\n", sizes.Code, sizes.ROData, sizes.Data, sizes.BSS, sizes.Code+sizes.ROData+sizes.Data, sizes.Data+sizes.BSS)
+				case "html":
+					const filename = "size-report.html"
+					err := writeSizeReport(sizes, filename, pkgName)
+					if err != nil {
+						return err
+					}
+					fmt.Println("Wrote size report to", filename)
 				}
 			}
 
@@ -1428,6 +1448,23 @@ func printStacks(calculatedStacks []string, stackSizes map[string]functionStackS
 	}
 }
 
+func applyPatches(executable string, bootPatches []string) (err error) {
+	for _, patch := range bootPatches {
+		switch patch {
+		case "rp2040":
+			err = patchRP2040BootCRC(executable)
+		// case "rp2350":
+		// 	err = patchRP2350BootIMAGE_DEF(executable)
+		default:
+			err = errors.New("undefined boot patch name")
+		}
+		if err != nil {
+			return fmt.Errorf("apply boot patch %q: %w", patch, err)
+		}
+	}
+	return nil
+}
+
 // RP2040 second stage bootloader CRC32 calculation
 //
 // Spec: https://datasheets.raspberrypi.org/rp2040/rp2040-datasheet.pdf
@@ -1439,7 +1476,7 @@ func patchRP2040BootCRC(executable string) error {
 	}
 
 	if len(bytes) != 256 {
-		return fmt.Errorf("rp2040 .boot2 section must be exactly 256 bytes")
+		return fmt.Errorf("rp2040 .boot2 section must be exactly 256 bytes, got %d", len(bytes))
 	}
 
 	// From the 'official' RP2040 checksum script:
@@ -1477,4 +1514,11 @@ func lock(path string) func() {
 	}
 
 	return func() { flock.Close() }
+}
+
+func b2u8(b bool) uint8 {
+	if b {
+		return 1
+	}
+	return 0
 }

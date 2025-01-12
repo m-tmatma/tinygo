@@ -77,3 +77,8 @@ double doSqrt(double x) {
 void printf_single_int(char *format, int arg) {
 	printf(format, arg);
 }
+
+int set_errno(int err) {
+	errno = err;
+	return -1;
+}

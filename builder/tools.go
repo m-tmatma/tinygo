@@ -32,9 +32,25 @@ func runCCompiler(flags ...string) error {
 	cmd.Stderr = os.Stderr
 
 	// Make sure the command doesn't use any environmental variables.
-	// Most importantly, it should not use C_INCLUDE_PATH and the like. But
-	// removing all environmental variables also works.
+	// Most importantly, it should not use C_INCLUDE_PATH and the like.
 	cmd.Env = []string{}
+
+	// Let some environment variables through. One important one is the
+	// temporary directory, especially on Windows it looks like Clang breaks if
+	// the temporary directory has not been set.
+	// See: https://github.com/tinygo-org/tinygo/issues/4557
+	// Also see: https://github.com/llvm/llvm-project/blob/release/18.x/llvm/lib/Support/Unix/Path.inc#L1435
+	for _, env := range os.Environ() {
+		// We could parse the key and look it up in a map, but since there are
+		// only a few keys iterating through them is easier and maybe even
+		// faster.
+		for _, prefix := range []string{"TMPDIR=", "TMP=", "TEMP=", "TEMPDIR="} {
+			if strings.HasPrefix(env, prefix) {
+				cmd.Env = append(cmd.Env, env)
+				break
+			}
+		}
+	}
 
 	return cmd.Run()
 }

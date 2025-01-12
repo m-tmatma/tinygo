@@ -926,23 +926,26 @@ func (i2c *I2C) readByte() byte {
 
 // I2S
 type I2S struct {
-	Bus *sam.I2S_Type
+	Bus        *sam.I2S_Type
+	Frequency  uint32
+	DataFormat I2SDataFormat
 }
 
 var I2S0 = I2S{Bus: sam.I2S}
 
 // Configure is used to configure the I2S interface. You must call this
 // before you can use the I2S bus.
-func (i2s I2S) Configure(config I2SConfig) {
+func (i2s *I2S) Configure(config I2SConfig) error {
 	// handle defaults
 	if config.SCK == 0 {
 		config.SCK = I2S_SCK_PIN
 		config.WS = I2S_WS_PIN
-		config.SD = I2S_SD_PIN
+		config.SDO = I2S_SDO_PIN
+		config.SDI = I2S_SDI_PIN
 	}
 
 	if config.AudioFrequency == 0 {
-		config.AudioFrequency = 48000
+		config.AudioFrequency = 44100
 	}
 
 	if config.DataFormat == I2SDataFormatDefault {
@@ -952,39 +955,17 @@ func (i2s I2S) Configure(config I2SConfig) {
 			config.DataFormat = I2SDataFormat32bit
 		}
 	}
+	i2s.DataFormat = config.DataFormat
 
 	// Turn on clock for I2S
 	sam.PM.APBCMASK.SetBits(sam.PM_APBCMASK_I2S_)
 
-	// setting clock rate for sample.
-	division_factor := CPUFrequency() / (config.AudioFrequency * uint32(config.DataFormat))
-
-	// Switch Generic Clock Generator 3 to DFLL48M.
-	sam.GCLK.GENDIV.Set((sam.GCLK_CLKCTRL_GEN_GCLK3 << sam.GCLK_GENDIV_ID_Pos) |
-		(division_factor << sam.GCLK_GENDIV_DIV_Pos))
-	waitForSync()
-
-	sam.GCLK.GENCTRL.Set((sam.GCLK_CLKCTRL_GEN_GCLK3 << sam.GCLK_GENCTRL_ID_Pos) |
-		(sam.GCLK_GENCTRL_SRC_DFLL48M << sam.GCLK_GENCTRL_SRC_Pos) |
-		sam.GCLK_GENCTRL_IDC |
-		sam.GCLK_GENCTRL_GENEN)
-	waitForSync()
-
-	// Use Generic Clock Generator 3 as source for I2S.
-	sam.GCLK.CLKCTRL.Set((sam.GCLK_CLKCTRL_ID_I2S_0 << sam.GCLK_CLKCTRL_ID_Pos) |
-		(sam.GCLK_CLKCTRL_GEN_GCLK3 << sam.GCLK_CLKCTRL_GEN_Pos) |
-		sam.GCLK_CLKCTRL_CLKEN)
-	waitForSync()
-
-	// reset the device
-	i2s.Bus.CTRLA.SetBits(sam.I2S_CTRLA_SWRST)
-	for i2s.Bus.SYNCBUSY.HasBits(sam.I2S_SYNCBUSY_SWRST) {
+	if err := i2s.SetSampleFrequency(config.AudioFrequency); err != nil {
+		return err
 	}
 
 	// disable device before continuing
-	for i2s.Bus.SYNCBUSY.HasBits(sam.I2S_SYNCBUSY_ENABLE) {
-	}
-	i2s.Bus.CTRLA.ClearBits(sam.I2S_CTRLA_ENABLE)
+	i2s.Enable(false)
 
 	// setup clock
 	if config.ClockSource == I2SClockSourceInternal {
@@ -1067,19 +1048,25 @@ func (i2s I2S) Configure(config I2SConfig) {
 	}
 
 	// set serializer mode.
-	if config.Mode == I2SModePDM {
+	switch config.Mode {
+	case I2SModePDM:
 		i2s.Bus.SERCTRL1.SetBits(sam.I2S_SERCTRL_SERMODE_PDM2)
-	} else {
+	case I2SModeSource:
+		i2s.Bus.SERCTRL1.SetBits(sam.I2S_SERCTRL_SERMODE_TX)
+	case I2SModeReceiver:
 		i2s.Bus.SERCTRL1.SetBits(sam.I2S_SERCTRL_SERMODE_RX)
 	}
 
-	// configure data pin
-	config.SD.Configure(PinConfig{Mode: PinCom})
+	// configure data pins
+	if config.SDO != NoPin {
+		config.SDO.Configure(PinConfig{Mode: PinCom})
+	}
+	if config.SDI != NoPin {
+		config.SDI.Configure(PinConfig{Mode: PinCom})
+	}
 
 	// re-enable
-	i2s.Bus.CTRLA.SetBits(sam.I2S_CTRLA_ENABLE)
-	for i2s.Bus.SYNCBUSY.HasBits(sam.I2S_SYNCBUSY_ENABLE) {
-	}
+	i2s.Enable(true)
 
 	// enable i2s clock
 	i2s.Bus.CTRLA.SetBits(sam.I2S_CTRLA_CKEN0)
@@ -1090,11 +1077,23 @@ func (i2s I2S) Configure(config I2SConfig) {
 	i2s.Bus.CTRLA.SetBits(sam.I2S_CTRLA_SEREN1)
 	for i2s.Bus.SYNCBUSY.HasBits(sam.I2S_SYNCBUSY_SEREN1) {
 	}
+
+	return nil
 }
 
-// Read data from the I2S bus into the provided slice.
+// Read mono data from the I2S bus into the provided slice.
 // The I2S bus must already have been configured correctly.
-func (i2s I2S) Read(p []uint32) (n int, err error) {
+func (i2s *I2S) ReadMono(p []uint16) (n int, err error) {
+	return i2sRead(i2s, p)
+}
+
+// Read stereo data from the I2S bus into the provided slice.
+// The I2S bus must already have been configured correctly.
+func (i2s *I2S) ReadStereo(p []uint32) (n int, err error) {
+	return i2sRead(i2s, p)
+}
+
+func i2sRead[T uint16 | uint32](i2s *I2S, p []T) (int, error) {
 	i := 0
 	for i = 0; i < len(p); i++ {
 		// Wait until ready
@@ -1105,7 +1104,7 @@ func (i2s I2S) Read(p []uint32) (n int, err error) {
 		}
 
 		// read data
-		p[i] = i2s.Bus.DATA1.Get()
+		p[i] = T(i2s.Bus.DATA1.Get())
 
 		// indicate read complete
 		i2s.Bus.INTFLAG.Set(sam.I2S_INTFLAG_RXRDY1)
@@ -1114,9 +1113,19 @@ func (i2s I2S) Read(p []uint32) (n int, err error) {
 	return i, nil
 }
 
-// Write data to the I2S bus from the provided slice.
+// Write mono data to the I2S bus from the provided slice.
 // The I2S bus must already have been configured correctly.
-func (i2s I2S) Write(p []uint32) (n int, err error) {
+func (i2s *I2S) WriteMono(p []uint16) (n int, err error) {
+	return i2sWrite(i2s, p)
+}
+
+// Write stereo data to the I2S bus from the provided slice.
+// The I2S bus must already have been configured correctly.
+func (i2s *I2S) WriteStereo(p []uint32) (n int, err error) {
+	return i2sWrite(i2s, p)
+}
+
+func i2sWrite[T uint16 | uint32](i2s *I2S, p []T) (int, error) {
 	i := 0
 	for i = 0; i < len(p); i++ {
 		// Wait until ready
@@ -1127,7 +1136,7 @@ func (i2s I2S) Write(p []uint32) (n int, err error) {
 		}
 
 		// write data
-		i2s.Bus.DATA1.Set(p[i])
+		i2s.Bus.DATA1.Set(uint32(p[i]))
 
 		// indicate write complete
 		i2s.Bus.INTFLAG.Set(sam.I2S_INTFLAG_TXRDY1)
@@ -1136,16 +1145,62 @@ func (i2s I2S) Write(p []uint32) (n int, err error) {
 	return i, nil
 }
 
-// Close the I2S bus.
-func (i2s I2S) Close() error {
-	// Sync wait
-	for i2s.Bus.SYNCBUSY.HasBits(sam.I2S_SYNCBUSY_ENABLE) {
+// SetSampleFrequency is used to set the sample frequency for the I2S bus.
+func (i2s *I2S) SetSampleFrequency(freq uint32) error {
+	if freq == 0 {
+		return ErrInvalidSampleFrequency
 	}
 
-	// disable I2S
-	i2s.Bus.CTRLA.ClearBits(sam.I2S_CTRLA_ENABLE)
+	if i2s.Frequency == freq {
+		return nil
+	}
+
+	i2s.Frequency = freq
+
+	// setting clock rate for sample.
+	division_factor := CPUFrequency() / (i2s.Frequency * uint32(i2s.DataFormat))
+
+	// Switch Generic Clock Generator 3 to DFLL48M.
+	sam.GCLK.GENDIV.Set((sam.GCLK_CLKCTRL_GEN_GCLK3 << sam.GCLK_GENDIV_ID_Pos) |
+		(division_factor << sam.GCLK_GENDIV_DIV_Pos))
+	waitForSync()
+
+	sam.GCLK.GENCTRL.Set((sam.GCLK_CLKCTRL_GEN_GCLK3 << sam.GCLK_GENCTRL_ID_Pos) |
+		(sam.GCLK_GENCTRL_SRC_DFLL48M << sam.GCLK_GENCTRL_SRC_Pos) |
+		sam.GCLK_GENCTRL_IDC |
+		sam.GCLK_GENCTRL_GENEN)
+	waitForSync()
+
+	// Use Generic Clock Generator 3 as source for I2S.
+	sam.GCLK.CLKCTRL.Set((sam.GCLK_CLKCTRL_ID_I2S_0 << sam.GCLK_CLKCTRL_ID_Pos) |
+		(sam.GCLK_CLKCTRL_GEN_GCLK3 << sam.GCLK_CLKCTRL_GEN_Pos) |
+		sam.GCLK_CLKCTRL_CLKEN)
+	waitForSync()
+
+	// reset the device
+	i2s.Bus.CTRLA.SetBits(sam.I2S_CTRLA_SWRST)
+	for i2s.Bus.SYNCBUSY.HasBits(sam.I2S_SYNCBUSY_SWRST) {
+	}
 
 	return nil
+}
+
+// Enabled is used to enable or disable the I2S bus.
+func (i2s *I2S) Enable(enabled bool) {
+	if enabled {
+		i2s.Bus.CTRLA.SetBits(sam.I2S_CTRLA_ENABLE)
+		for i2s.Bus.SYNCBUSY.HasBits(sam.I2S_SYNCBUSY_ENABLE) {
+		}
+
+		return
+	}
+
+	// disable
+	for i2s.Bus.SYNCBUSY.HasBits(sam.I2S_SYNCBUSY_ENABLE) {
+	}
+	i2s.Bus.CTRLA.ClearBits(sam.I2S_CTRLA_ENABLE)
+
+	return
 }
 
 func waitForSync() {

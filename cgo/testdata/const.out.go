@@ -1,5 +1,6 @@
 package main
 
+import "syscall"
 import "unsafe"
 
 var _ unsafe.Pointer
@@ -31,6 +32,13 @@ func C.CBytes(b []byte) unsafe.Pointer {
 	return C.__CBytes(b)
 }
 
+//go:linkname C.__get_errno_num runtime.cgo_errno
+func C.__get_errno_num() uintptr
+
+func C.__get_errno() error {
+	return syscall.Errno(C.__get_errno_num())
+}
+
 type (
 	C.char      uint8
 	C.schar     int8
@@ -47,3 +55,8 @@ type (
 
 const C.foo = 3
 const C.bar = C.foo
+const C.unreferenced = 4
+const C.referenced = C.unreferenced
+const C.fnlike_val = 5
+const C.square_val = (20 * 20)
+const C.add_val = (3 + 5)

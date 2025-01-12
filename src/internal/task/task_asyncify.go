@@ -52,7 +52,7 @@ type stackState struct {
 func start(fn uintptr, args unsafe.Pointer, stackSize uintptr) {
 	t := &Task{}
 	t.state.initialize(fn, args, stackSize)
-	runqueuePushBack(t)
+	scheduleTask(t)
 }
 
 //export tinygo_launch
@@ -81,9 +81,6 @@ func (s *state) initialize(fn uintptr, args unsafe.Pointer, stackSize uintptr) {
 	s.asyncifysp = unsafe.Add(stack, unsafe.Sizeof(uintptr(0)))
 	s.csp = unsafe.Add(stack, stackSize)
 }
-
-//go:linkname runqueuePushBack runtime.runqueuePushBack
-func runqueuePushBack(*Task)
 
 // currentTask is the current running task, or nil if currently in the scheduler.
 var currentTask *Task

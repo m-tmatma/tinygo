@@ -127,3 +127,8 @@ func write(fd uintptr, p unsafe.Pointer, n int32) int32 {
 func getAuxv() []uintptr {
 	return nil
 }
+
+// Called from cgo to obtain the errno value.
+func cgo_errno() uintptr {
+	return uintptr(*libc_errno_location())
+}

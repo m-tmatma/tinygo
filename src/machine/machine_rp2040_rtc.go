@@ -97,7 +97,7 @@ func toAlarmTime(delay uint32) rtcTime {
 
 func (rtc *rtcType) setDivider() {
 	// Get clk_rtc freq and make sure it is running
-	rtcFreq := configuredFreq[clkRTC]
+	rtcFreq := configuredFreq[ClkRTC]
 	if rtcFreq == 0 {
 		panic("can not set RTC divider, clock is not running")
 	}

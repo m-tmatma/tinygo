@@ -162,8 +162,8 @@ func readStream(stream *wasiStream, buf *byte, count uint, offset int64) int {
 	}
 
 	libcErrno = 0
-	result := stream.in.BlockingRead(uint64(count))
-	if err := result.Err(); err != nil {
+	list, err, isErr := stream.in.BlockingRead(uint64(count)).Result()
+	if isErr {
 		if err.Closed() {
 			libcErrno = 0
 			return 0
@@ -174,9 +174,7 @@ func readStream(stream *wasiStream, buf *byte, count uint, offset int64) int {
 		return -1
 	}
 
-	dst := unsafe.Slice(buf, count)
-	list := result.OK()
-	copy(dst, list.Slice())
+	copy(unsafe.Slice(buf, count), list.Slice())
 	return int(list.Len())
 }
 
@@ -202,8 +200,8 @@ func writeStream(stream *wasiStream, buf *byte, count uint, offset int64) int {
 		if len > remaining {
 			len = remaining
 		}
-		result := stream.out.BlockingWriteAndFlush(cm.ToList(src[:len]))
-		if err := result.Err(); err != nil {
+		_, err, isErr := stream.out.BlockingWriteAndFlush(cm.ToList(src[:len])).Result()
+		if isErr {
 			if err.Closed() {
 				libcErrno = 0
 				return 0
@@ -248,13 +246,13 @@ func pread(fd int32, buf *byte, count uint, offset int64) int {
 		return -1
 	}
 
-	result := streams.d.Read(types.FileSize(count), types.FileSize(offset))
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	listEOF, err, isErr := streams.d.Read(types.FileSize(count), types.FileSize(offset)).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
-	list := result.OK().F0
+	list := listEOF.F0
 	copy(unsafe.Slice(buf, count), list.Slice())
 
 	// TODO(dgryski): EOF bool is ignored?
@@ -285,14 +283,14 @@ func pwrite(fd int32, buf *byte, count uint, offset int64) int {
 		return -1
 	}
 
-	result := streams.d.Write(cm.NewList(buf, count), types.FileSize(offset))
-	if err := result.Err(); err != nil {
+	n, err, isErr := streams.d.Write(cm.NewList(buf, count), types.FileSize(offset)).Result()
+	if isErr {
 		// TODO(dgryski):
-		libcErrno = errorCodeToErrno(*err)
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
-	return int(*result.OK())
+	return int(n)
 }
 
 // ssize_t lseek(int fd, off_t offset, int whence);
@@ -321,12 +319,12 @@ func lseek(fd int32, offset int64, whence int) int64 {
 	case 1: // SEEK_CUR
 		stream.offset += offset
 	case 2: // SEEK_END
-		result := stream.d.Stat()
-		if err := result.Err(); err != nil {
-			libcErrno = errorCodeToErrno(*err)
+		stat, err, isErr := stream.d.Stat().Result()
+		if isErr {
+			libcErrno = errorCodeToErrno(err)
 			return -1
 		}
-		stream.offset = int64(result.OK().Size) + offset
+		stream.offset = int64(stat.Size) + offset
 	}
 
 	return int64(stream.offset)
@@ -439,9 +437,9 @@ func mkdir(pathname *byte, mode uint32) int32 {
 		return -1
 	}
 
-	result := dir.d.CreateDirectoryAt(relPath)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	_, err, isErr := dir.d.CreateDirectoryAt(relPath).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
@@ -459,9 +457,9 @@ func rmdir(pathname *byte) int32 {
 		return -1
 	}
 
-	result := dir.d.RemoveDirectoryAt(relPath)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	_, err, isErr := dir.d.RemoveDirectoryAt(relPath).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
@@ -486,9 +484,9 @@ func rename(from, to *byte) int32 {
 		return -1
 	}
 
-	result := fromDir.d.RenameAt(fromRelPath, toDir.d, toRelPath)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	_, err, isErr := fromDir.d.RenameAt(fromRelPath, toDir.d, toRelPath).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
@@ -520,9 +518,9 @@ func symlink(from, to *byte) int32 {
 
 	// TODO(dgryski): check fromDir == toDir?
 
-	result := fromDir.d.SymlinkAt(fromRelPath, toRelPath)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	_, err, isErr := fromDir.d.SymlinkAt(fromRelPath, toRelPath).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
@@ -554,9 +552,9 @@ func link(from, to *byte) int32 {
 
 	// TODO(dgryski): check fromDir == toDir?
 
-	result := fromDir.d.LinkAt(0, fromRelPath, toDir.d, toRelPath)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	_, err, isErr := fromDir.d.LinkAt(0, fromRelPath, toDir.d, toRelPath).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
@@ -587,9 +585,9 @@ func fsync(fd int32) int32 {
 		return -1
 	}
 
-	result := streams.d.SyncData()
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	_, err, isErr := streams.d.SyncData().Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
@@ -607,13 +605,12 @@ func readlink(pathname *byte, buf *byte, count uint) int {
 		return -1
 	}
 
-	result := dir.d.ReadLinkAt(relPath)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	s, err, isErr := dir.d.ReadLinkAt(relPath).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
-	s := *result.OK()
 	size := uintptr(count)
 	if size > uintptr(len(s)) {
 		size = uintptr(len(s))
@@ -634,9 +631,9 @@ func unlink(pathname *byte) int32 {
 		return -1
 	}
 
-	result := dir.d.UnlinkFileAt(relPath)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	_, err, isErr := dir.d.UnlinkFileAt(relPath).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
@@ -661,13 +658,13 @@ func stat(pathname *byte, dst *Stat_t) int32 {
 		return -1
 	}
 
-	result := dir.d.StatAt(0, relPath)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	stat, err, isErr := dir.d.StatAt(0, relPath).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
-	setStatFromWASIStat(dst, result.OK())
+	setStatFromWASIStat(dst, &stat)
 
 	return 0
 }
@@ -690,13 +687,13 @@ func fstat(fd int32, dst *Stat_t) int32 {
 		libcErrno = EBADF
 		return -1
 	}
-	result := stream.d.Stat()
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	stat, err, isErr := stream.d.Stat().Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
-	setStatFromWASIStat(dst, result.OK())
+	setStatFromWASIStat(dst, &stat)
 
 	return 0
 }
@@ -745,13 +742,13 @@ func lstat(pathname *byte, dst *Stat_t) int32 {
 		return -1
 	}
 
-	result := dir.d.StatAt(0, relPath)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	stat, err, isErr := dir.d.StatAt(0, relPath).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
-	setStatFromWASIStat(dst, result.OK())
+	setStatFromWASIStat(dst, &stat)
 
 	return 0
 }
@@ -981,25 +978,25 @@ func open(pathname *byte, flags int32, mode uint32) int32 {
 		pflags &^= types.PathFlagsSymlinkFollow
 	}
 
-	result := dir.d.OpenAt(pflags, relPath, oflags, dflags)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	descriptor, err, isErr := dir.d.OpenAt(pflags, relPath, oflags, dflags).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 
 	stream := wasiFile{
-		d:     *result.OK(),
+		d:     descriptor,
 		oflag: flags,
 		refs:  1,
 	}
 
 	if flags&(O_WRONLY|O_APPEND) == (O_WRONLY | O_APPEND) {
-		result := stream.d.Stat()
-		if err := result.Err(); err != nil {
-			libcErrno = errorCodeToErrno(*err)
+		stat, err, isErr := stream.d.Stat().Result()
+		if isErr {
+			libcErrno = errorCodeToErrno(err)
 			return -1
 		}
-		stream.offset = int64(result.OK().Size)
+		stream.offset = int64(stat.Size)
 	}
 
 	libcfd := findFreeFD()
@@ -1112,13 +1109,13 @@ func fdopendir(fd int32) unsafe.Pointer {
 		return nil
 	}
 
-	result := stream.d.ReadDirectory()
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	dir, err, isErr := stream.d.ReadDirectory().Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return nil
 	}
 
-	return unsafe.Pointer(&libc_DIR{d: *result.OK()})
+	return unsafe.Pointer(&libc_DIR{d: dir})
 }
 
 // int fdclosedir(DIR *);
@@ -1153,13 +1150,13 @@ func readdir(dirp unsafe.Pointer) *Dirent {
 		return nil
 	}
 
-	result := dir.d.ReadDirectoryEntry()
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	someEntry, err, isErr := dir.d.ReadDirectoryEntry().Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return nil
 	}
 
-	entry := result.OK().Some()
+	entry := someEntry.Some()
 	if entry == nil {
 		libcErrno = 0
 		return nil
@@ -1230,58 +1227,6 @@ func p2fileTypeToStatType(t types.DescriptorType) uint32 {
 	return 0
 }
 
-var libc_envs map[string]string
-
-func populateEnvironment() {
-	libc_envs = make(map[string]string)
-	for _, kv := range environment.GetEnvironment().Slice() {
-		libc_envs[kv[0]] = kv[1]
-	}
-}
-
-// char * getenv(const char *name);
-//
-//export getenv
-func getenv(key *byte) *byte {
-	k := goString(key)
-
-	v, ok := libc_envs[k]
-	if !ok {
-		return nil
-	}
-
-	// The new allocation is zero-filled; allocating an extra byte and then
-	// copying the data over will leave the last byte untouched,
-	// null-terminating the string.
-	vbytes := make([]byte, len(v)+1)
-	copy(vbytes, v)
-	return unsafe.SliceData(vbytes)
-}
-
-// int setenv(const char *name, const char *value, int overwrite);
-//
-//export setenv
-func setenv(key, value *byte, overwrite int) int {
-	k := goString(key)
-	if _, ok := libc_envs[k]; ok && overwrite == 0 {
-		return 0
-	}
-
-	v := goString(value)
-	libc_envs[k] = v
-
-	return 0
-}
-
-// int unsetenv(const char *name);
-//
-//export unsetenv
-func unsetenv(key *byte) int {
-	k := goString(key)
-	delete(libc_envs, k)
-	return 0
-}
-
 // void arc4random_buf (void *, size_t);
 //
 //export arc4random_buf
@@ -1311,9 +1256,9 @@ func chdir(name *byte) int {
 		return -1
 	}
 
-	result := dir.d.OpenAt(types.PathFlagsSymlinkFollow, rel, types.OpenFlagsDirectory, types.DescriptorFlagsRead)
-	if err := result.Err(); err != nil {
-		libcErrno = errorCodeToErrno(*err)
+	_, err, isErr := dir.d.OpenAt(types.PathFlagsSymlinkFollow, rel, types.OpenFlagsDirectory, types.DescriptorFlagsRead).Result()
+	if isErr {
+		libcErrno = errorCodeToErrno(err)
 		return -1
 	}
 

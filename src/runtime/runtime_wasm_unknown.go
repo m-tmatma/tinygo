@@ -34,5 +34,8 @@ func ticks() timeUnit {
 	return timeUnit(0)
 }
 
-func beforeExit() {
+func mainReturnExit() {
+	// Don't exit explicitly here. We can't (there is no environment with an
+	// exit call) but also it's not needed. We can just let _start and main.main
+	// return to the caller.
 }

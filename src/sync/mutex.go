@@ -3,31 +3,29 @@ package sync
 import (
 	"internal/task"
 	_ "unsafe"
-
-	"runtime/volatile"
 )
 
 type Mutex struct {
-	state   uint8 // Set to non-zero if locked.
+	locked  bool
 	blocked task.Stack
 }
 
-//go:linkname scheduleTask runtime.runqueuePushBack
+//go:linkname scheduleTask runtime.scheduleTask
 func scheduleTask(*task.Task)
 
 func (m *Mutex) Lock() {
-	if m.islocked() {
+	if m.locked {
 		// Push self onto stack of blocked tasks, and wait to be resumed.
 		m.blocked.Push(task.Current())
 		task.Pause()
 		return
 	}
 
-	m.setlock(true)
+	m.locked = true
 }
 
 func (m *Mutex) Unlock() {
-	if !m.islocked() {
+	if !m.locked {
 		panic("sync: unlock of unlocked Mutex")
 	}
 
@@ -35,7 +33,7 @@ func (m *Mutex) Unlock() {
 	if t := m.blocked.Pop(); t != nil {
 		scheduleTask(t)
 	} else {
-		m.setlock(false)
+		m.locked = false
 	}
 }
 
@@ -45,26 +43,11 @@ func (m *Mutex) Unlock() {
 // and use of TryLock is often a sign of a deeper problem
 // in a particular use of mutexes.
 func (m *Mutex) TryLock() bool {
-	if m.islocked() {
+	if m.locked {
 		return false
 	}
 	m.Lock()
 	return true
-}
-
-func (m *Mutex) islocked() bool {
-	return volatile.LoadUint8(&m.state) != 0
-}
-
-func (m *Mutex) setlock(b bool) {
-	volatile.StoreUint8(&m.state, boolToU8(b))
-}
-
-func boolToU8(b bool) uint8 {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 type RWMutex struct {

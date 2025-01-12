@@ -101,15 +101,12 @@ func swapTask(oldStack uintptr, newStack *uintptr)
 //go:extern tinygo_startTask
 var startTask [0]uint8
 
-//go:linkname runqueuePushBack runtime.runqueuePushBack
-func runqueuePushBack(*Task)
-
 // start creates and starts a new goroutine with the given function and arguments.
 // The new goroutine is scheduled to run later.
 func start(fn uintptr, args unsafe.Pointer, stackSize uintptr) {
 	t := &Task{}
 	t.state.initialize(fn, args, stackSize)
-	runqueuePushBack(t)
+	scheduleTask(t)
 }
 
 // OnSystemStack returns whether the caller is running on the system stack.

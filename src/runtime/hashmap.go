@@ -7,6 +7,7 @@ package runtime
 
 import (
 	"reflect"
+	"tinygo"
 	"unsafe"
 )
 
@@ -21,14 +22,6 @@ type hashmap struct {
 	keyEqual   func(x, y unsafe.Pointer, n uintptr) bool
 	keyHash    func(key unsafe.Pointer, size, seed uintptr) uint32
 }
-
-type hashmapAlgorithm uint8
-
-const (
-	hashmapAlgorithmBinary hashmapAlgorithm = iota
-	hashmapAlgorithmString
-	hashmapAlgorithmInterface
-)
 
 // A hashmap bucket. A bucket is a container of 8 key/value pairs: first the
 // following two entries, then the 8 keys, then the 8 values. This somewhat odd
@@ -76,8 +69,8 @@ func hashmapMake(keySize, valueSize uintptr, sizeHint uintptr, alg uint8) *hashm
 	bucketBufSize := unsafe.Sizeof(hashmapBucket{}) + keySize*8 + valueSize*8
 	buckets := alloc(bucketBufSize*(1<<bucketBits), nil)
 
-	keyHash := hashmapKeyHashAlg(hashmapAlgorithm(alg))
-	keyEqual := hashmapKeyEqualAlg(hashmapAlgorithm(alg))
+	keyHash := hashmapKeyHashAlg(tinygo.HashmapAlgorithm(alg))
+	keyEqual := hashmapKeyEqualAlg(tinygo.HashmapAlgorithm(alg))
 
 	return &hashmap{
 		buckets:    buckets,
@@ -119,13 +112,13 @@ func hashmapClear(m *hashmap) {
 	}
 }
 
-func hashmapKeyEqualAlg(alg hashmapAlgorithm) func(x, y unsafe.Pointer, n uintptr) bool {
+func hashmapKeyEqualAlg(alg tinygo.HashmapAlgorithm) func(x, y unsafe.Pointer, n uintptr) bool {
 	switch alg {
-	case hashmapAlgorithmBinary:
+	case tinygo.HashmapAlgorithmBinary:
 		return memequal
-	case hashmapAlgorithmString:
+	case tinygo.HashmapAlgorithmString:
 		return hashmapStringEqual
-	case hashmapAlgorithmInterface:
+	case tinygo.HashmapAlgorithmInterface:
 		return hashmapInterfaceEqual
 	default:
 		// compiler bug :(
@@ -133,13 +126,13 @@ func hashmapKeyEqualAlg(alg hashmapAlgorithm) func(x, y unsafe.Pointer, n uintpt
 	}
 }
 
-func hashmapKeyHashAlg(alg hashmapAlgorithm) func(key unsafe.Pointer, n, seed uintptr) uint32 {
+func hashmapKeyHashAlg(alg tinygo.HashmapAlgorithm) func(key unsafe.Pointer, n, seed uintptr) uint32 {
 	switch alg {
-	case hashmapAlgorithmBinary:
+	case tinygo.HashmapAlgorithmBinary:
 		return hash32
-	case hashmapAlgorithmString:
+	case tinygo.HashmapAlgorithmString:
 		return hashmapStringPtrHash
-	case hashmapAlgorithmInterface:
+	case tinygo.HashmapAlgorithmInterface:
 		return hashmapInterfacePtrHash
 	default:
 		// compiler bug :(

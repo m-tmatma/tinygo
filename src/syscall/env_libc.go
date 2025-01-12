@@ -55,5 +55,57 @@ func Environ() []string {
 	return envs
 }
 
+func Getenv(key string) (value string, found bool) {
+	data := cstring(key)
+	raw := libc_getenv(&data[0])
+	if raw == nil {
+		return "", false
+	}
+
+	ptr := uintptr(unsafe.Pointer(raw))
+	for size := uintptr(0); ; size++ {
+		v := *(*byte)(unsafe.Pointer(ptr))
+		if v == 0 {
+			src := *(*[]byte)(unsafe.Pointer(&sliceHeader{buf: raw, len: size, cap: size}))
+			return string(src), true
+		}
+		ptr += unsafe.Sizeof(byte(0))
+	}
+}
+
+func Setenv(key, val string) (err error) {
+	if len(key) == 0 {
+		return EINVAL
+	}
+	for i := 0; i < len(key); i++ {
+		if key[i] == '=' || key[i] == 0 {
+			return EINVAL
+		}
+	}
+	for i := 0; i < len(val); i++ {
+		if val[i] == 0 {
+			return EINVAL
+		}
+	}
+	runtimeSetenv(key, val)
+	return
+}
+
+func Unsetenv(key string) (err error) {
+	runtimeUnsetenv(key)
+	return
+}
+
+func Clearenv() {
+	for _, s := range Environ() {
+		for j := 0; j < len(s); j++ {
+			if s[j] == '=' {
+				Unsetenv(s[0:j])
+				break
+			}
+		}
+	}
+}
+
 //go:extern environ
 var libc_environ *unsafe.Pointer

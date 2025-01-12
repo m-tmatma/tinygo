@@ -116,6 +116,7 @@ var libMusl = Library{
 			"env/*.c",
 			"errno/*.c",
 			"exit/*.c",
+			"fcntl/*.c",
 			"internal/defsysinfo.c",
 			"internal/libc.c",
 			"internal/syscall_ret.c",
@@ -127,6 +128,7 @@ var libMusl = Library{
 			"malloc/mallocng/*.c",
 			"mman/*.c",
 			"math/*.c",
+			"misc/*.c",
 			"multibyte/*.c",
 			"signal/" + arch + "/*.s",
 			"signal/*.c",
@@ -136,10 +138,18 @@ var libMusl = Library{
 			"thread/*.c",
 			"time/*.c",
 			"unistd/*.c",
+			"process/*.c",
 		}
+
 		if arch == "arm" {
 			// These files need to be added to the start for some reason.
 			globs = append([]string{"thread/arm/*.c"}, globs...)
+		}
+
+		if arch != "aarch64" && arch != "mips" {
+			//aarch64 and mips have no architecture specific code, either they
+			// are not supported or don't need any?
+			globs = append([]string{"process/" + arch + "/*.s"}, globs...)
 		}
 
 		var sources []string

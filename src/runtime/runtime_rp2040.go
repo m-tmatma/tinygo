@@ -31,10 +31,6 @@ func nanosecondsToTicks(ns int64) timeUnit {
 }
 
 func sleepTicks(d timeUnit) {
-	if d <= 0 {
-		return
-	}
-
 	if hasScheduler {
 		// With scheduler, sleepTicks may return early if an interrupt or
 		// event fires - so scheduler can schedule any go routines now

@@ -439,6 +439,12 @@ type ptrType struct {
 	elem      *rawType
 }
 
+type interfaceType struct {
+	rawType
+	ptrTo *rawType
+	// TODO: methods
+}
+
 type arrayType struct {
 	rawType
 	numMethod uint16
@@ -995,6 +1001,10 @@ func (t *rawType) AssignableTo(u Type) bool {
 		return true
 	}
 
+	if t.underlying() == u.(*rawType).underlying() && (!t.isNamed() || !u.(*rawType).isNamed()) {
+		return true
+	}
+
 	if u.Kind() == Interface && u.NumMethod() == 0 {
 		return true
 	}
@@ -1060,6 +1070,9 @@ func (t *rawType) NumMethod() int {
 		return int((*ptrType)(unsafe.Pointer(t)).numMethod)
 	case Struct:
 		return int((*structType)(unsafe.Pointer(t)).numMethod)
+	case Interface:
+		//FIXME: Use len(methods)
+		return (*interfaceType)(unsafe.Pointer(t)).ptrTo.NumMethod()
 	}
 
 	// Other types have no methods attached.  Note we don't panic here.

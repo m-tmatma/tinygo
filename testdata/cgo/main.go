@@ -18,7 +18,10 @@ import "C"
 // static int headerfunc_static(int a) { return a - 1; }
 import "C"
 
-import "unsafe"
+import (
+	"syscall"
+	"unsafe"
+)
 
 func main() {
 	println("fortytwo:", C.fortytwo())
@@ -167,6 +170,13 @@ func main() {
 	println("len(C.GoBytes(nil, 0)):", len(C.GoBytes(nil, 0)))
 	println("len(C.GoBytes(C.CBytes(nil),0)):", len(C.GoBytes(C.CBytes(nil), 0)))
 	println(`rountrip CBytes:`, C.GoString((*C.char)(C.CBytes([]byte("hello\000")))))
+
+	// Check that errno is returned from the second return value, and that it
+	// matches the errno value that was just set.
+	_, errno := C.set_errno(C.EINVAL)
+	println("EINVAL:", errno == syscall.EINVAL)
+	_, errno = C.set_errno(C.EAGAIN)
+	println("EAGAIN:", errno == syscall.EAGAIN)
 
 	// libc: test whether C functions work at all.
 	buf1 := []byte("foobar\x00")

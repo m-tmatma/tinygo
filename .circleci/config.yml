@@ -90,6 +90,8 @@ commands:
               name: Check Go code formatting
               command: make fmt-check lint
       - run: make gen-device -j4
+      # TODO: change this to -skip='TestErrors|TestWasm' with Go 1.20
+      - run: go test -tags=llvm<<parameters.llvm>> -short -run='TestBuild|TestTest|TestGetList|TestTraceback'
       - run: make smoketest XTENSA=0
       - save_cache:
           key: go-cache-v4-{{ checksum "go.mod" }}-{{ .Environment.CIRCLE_BUILD_NUM }}
