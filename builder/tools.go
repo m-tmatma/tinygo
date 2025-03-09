@@ -114,8 +114,8 @@ func parseLLDErrors(text string) error {
 
 		// Check for undefined symbols.
 		// This can happen in some cases like with CGo and //go:linkname tricker.
-		if matches := regexp.MustCompile(`^ld.lld: error: undefined symbol: (.*)\n`).FindStringSubmatch(message); matches != nil {
-			symbolName := matches[1]
+		if matches := regexp.MustCompile(`^ld.lld(-[0-9]+)?: error: undefined symbol: (.*)\n`).FindStringSubmatch(message); matches != nil {
+			symbolName := matches[2]
 			for _, line := range strings.Split(message, "\n") {
 				matches := regexp.MustCompile(`referenced by .* \(((.*):([0-9]+))\)`).FindStringSubmatch(line)
 				if matches != nil {
@@ -134,9 +134,9 @@ func parseLLDErrors(text string) error {
 		}
 
 		// Check for flash/RAM overflow.
-		if matches := regexp.MustCompile(`^ld.lld: error: section '(.*?)' will not fit in region '(.*?)': overflowed by ([0-9]+) bytes$`).FindStringSubmatch(message); matches != nil {
-			region := matches[2]
-			n, err := strconv.ParseUint(matches[3], 10, 64)
+		if matches := regexp.MustCompile(`^ld.lld(-[0-9]+)?: error: section '(.*?)' will not fit in region '(.*?)': overflowed by ([0-9]+) bytes$`).FindStringSubmatch(message); matches != nil {
+			region := matches[3]
+			n, err := strconv.ParseUint(matches[4], 10, 64)
 			if err != nil {
 				// Should not happen at all (unless it overflows an uint64 for some reason).
 				continue

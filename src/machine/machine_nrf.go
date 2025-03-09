@@ -3,7 +3,6 @@
 package machine
 
 import (
-	"bytes"
 	"device/nrf"
 	"internal/binary"
 	"runtime/interrupt"
@@ -318,9 +317,9 @@ func (i2c *I2C) signalStop() error {
 
 var rngStarted = false
 
-// GetRNG returns 32 bits of non-deterministic random data based on internal thermal noise.
+// getRNG returns 32 bits of non-deterministic random data based on internal thermal noise.
 // According to Nordic's documentation, the random output is suitable for cryptographic purposes.
-func GetRNG() (ret uint32, err error) {
+func getRNG() (ret uint32, err error) {
 	// There's no apparent way to check the status of the RNG peripheral's task, so simply start it
 	// to avoid deadlocking while waiting for output.
 	if !rngStarted {
@@ -386,7 +385,7 @@ func (f flashBlockDevice) WriteAt(p []byte, off int64) (n int, err error) {
 	}
 
 	address := FlashDataStart() + uintptr(off)
-	padded := f.pad(p)
+	padded := flashPad(p, int(f.WriteBlockSize()))
 
 	waitWhileFlashBusy()
 
@@ -442,17 +441,6 @@ func (f flashBlockDevice) EraseBlocks(start, len int64) error {
 	}
 
 	return nil
-}
-
-// pad data if needed so it is long enough for correct byte alignment on writes.
-func (f flashBlockDevice) pad(p []byte) []byte {
-	overflow := int64(len(p)) % f.WriteBlockSize()
-	if overflow == 0 {
-		return p
-	}
-
-	padding := bytes.Repeat([]byte{0xff}, int(f.WriteBlockSize()-overflow))
-	return append(p, padding...)
 }
 
 func waitWhileFlashBusy() {

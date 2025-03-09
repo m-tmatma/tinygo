@@ -35,6 +35,7 @@ func wasmEntryReactor() {
 	heapStart = uintptr(unsafe.Pointer(&heapStartSymbol))
 	heapEnd = uintptr(wasm_memory_size(0) * wasmPageSize)
 	initHeap()
+	initRand()
 
 	if hasScheduler {
 		// A package initializer might do funky stuff like start a goroutine and
@@ -49,6 +50,15 @@ func wasmEntryReactor() {
 		// that), so we can just run all the package initializers.
 		initAll()
 	}
+}
+
+// This is the _start entry point, when using -buildmode=wasi-legacy.
+func wasmEntryLegacy() {
+	// These need to be initialized early so that the heap can be initialized.
+	initializeCalled = true
+	heapStart = uintptr(unsafe.Pointer(&heapStartSymbol))
+	heapEnd = uintptr(wasm_memory_size(0) * wasmPageSize)
+	run()
 }
 
 // Whether the runtime was initialized by a call to _initialize or _start.

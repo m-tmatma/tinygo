@@ -1062,9 +1062,8 @@ func findFATMounts(options *compileopts.Options) ([]mountPoint, error) {
 		return points, nil
 	case "windows":
 		// Obtain a list of all currently mounted volumes.
-		cmd := executeCommand(options, "wmic",
-			"PATH", "Win32_LogicalDisk",
-			"get", "DeviceID,VolumeName,FileSystem,DriveType")
+		cmd := executeCommand(options, "powershell", "-c",
+			"Get-CimInstance -ClassName Win32_LogicalDisk | Select-Object DeviceID, DriveType, FileSystem, VolumeName")
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		err := cmd.Run()
@@ -1502,7 +1501,7 @@ func main() {
 	var tags buildutil.TagsFlag
 	flag.Var(&tags, "tags", "a space-separated list of extra build tags")
 	target := flag.String("target", "", "chip/board name or JSON target specification file")
-	buildMode := flag.String("buildmode", "", "build mode to use (default, c-shared)")
+	buildMode := flag.String("buildmode", "", "build mode to use (default, c-shared, wasi-legacy)")
 	var stackSize uint64
 	flag.Func("stack-size", "goroutine stack size (if unknown at compile time)", func(s string) error {
 		size, err := bytesize.Parse(s)
@@ -1685,8 +1684,24 @@ func main() {
 			usage(command)
 			os.Exit(1)
 		}
-		if options.Target == "" && filepath.Ext(outpath) == ".wasm" {
-			options.Target = "wasm"
+		if options.Target == "" {
+			switch {
+			case options.GOARCH == "wasm":
+				switch options.GOOS {
+				case "js":
+					options.Target = "wasm"
+				case "wasip1":
+					options.Target = "wasip1"
+				case "wasip2":
+					options.Target = "wasip2"
+				default:
+					fmt.Fprintln(os.Stderr, "GOARCH=wasm but GOOS is not set correctly. Please set GOOS to wasm, wasip1, or wasip2.")
+					os.Exit(1)
+				}
+			case filepath.Ext(outpath) == ".wasm":
+				fmt.Fprintln(os.Stderr, "you appear to want to build a wasm file, but have not specified either a target flag, or the GOARCH/GOOS to use.")
+				os.Exit(1)
+			}
 		}
 
 		err := Build(pkgName, outpath, options)

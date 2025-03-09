@@ -283,6 +283,11 @@ func (c *compilerContext) getFunctionInfo(f *ssa.Function) functionInfo {
 		info.wasmName = "_start"
 		info.exported = true
 	}
+	if info.linkName == "runtime.wasmEntryLegacy" && c.BuildMode == "wasi-legacy" {
+		info.linkName = "_start"
+		info.wasmName = "_start"
+		info.exported = true
+	}
 
 	// Check for //go: pragmas, which may change the link name (among others).
 	c.parsePragmas(&info, f)
@@ -427,9 +432,8 @@ func (c *compilerContext) parsePragmas(info *functionInfo, f *ssa.Function) {
 			// pass for C variadic functions. This includes both explicit
 			// (with ...) and implicit (no parameters in signature)
 			// functions.
-			if strings.HasPrefix(f.Name(), "C.") {
-				// This prefix cannot naturally be created, it must have
-				// been created as a result of CGo preprocessing.
+			if strings.HasPrefix(f.Name(), "_Cgo_") {
+				// This prefix was created as a result of CGo preprocessing.
 				info.variadic = true
 			}
 		}

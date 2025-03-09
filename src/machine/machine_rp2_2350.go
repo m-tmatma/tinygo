@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	cpuFreq          = 150 * MHz
 	_NUMBANK0_GPIOS  = 48
 	_NUMBANK0_IRQS   = 6
 	rp2350ExtraReg   = 1
@@ -49,26 +50,26 @@ const (
 )
 
 const (
-	ClkGPOUT0 clockIndex = iota // GPIO Muxing 0
-	ClkGPOUT1                   // GPIO Muxing 1
-	ClkGPOUT2                   // GPIO Muxing 2
-	ClkGPOUT3                   // GPIO Muxing 3
-	ClkRef                      // Watchdog and timers reference clock
-	ClkSys                      // Processors, bus fabric, memory, memory mapped registers
-	ClkPeri                     // Peripheral clock for UART and SPI
+	clkGPOUT0 clockIndex = iota // GPIO Muxing 0
+	clkGPOUT1                   // GPIO Muxing 1
+	clkGPOUT2                   // GPIO Muxing 2
+	clkGPOUT3                   // GPIO Muxing 3
+	clkRef                      // Watchdog and timers reference clock
+	clkSys                      // Processors, bus fabric, memory, memory mapped registers
+	clkPeri                     // Peripheral clock for UART and SPI
 	ClkHSTX                     // High speed interface
-	ClkUSB                      // USB clock
-	ClkADC                      // ADC clock
-	NumClocks
+	clkUSB                      // USB clock
+	clkADC                      // ADC clock
+	numClocks
 )
 
-func CalcClockDiv(srcFreq, freq uint32) uint32 {
+func calcClockDiv(srcFreq, freq uint32) uint32 {
 	// Div register is 4.16 int.frac divider so multiply by 2^16 (left shift by 16)
 	return uint32((uint64(srcFreq) << 16) / uint64(freq))
 }
 
 type clocksType struct {
-	clk               [NumClocks]clockType
+	clk               [numClocks]clockType
 	dftclk_xosc_ctrl  volatile.Register32
 	dftclk_rosc_ctrl  volatile.Register32
 	dftclk_lposc_ctrl volatile.Register32
@@ -126,11 +127,17 @@ func (p Pin) Configure(config PinConfig) {
 		return
 	}
 	p.init()
-	mask := uint32(1) << p
+
 	switch config.Mode {
 	case PinOutput:
 		p.setFunc(fnSIO)
-		rp.SIO.GPIO_OE_SET.Set(mask)
+		if is48Pin && p >= 32 {
+			mask := uint32(1) << (p % 32)
+			rp.SIO.GPIO_HI_OE_SET.Set(mask)
+		} else {
+			mask := uint32(1) << p
+			rp.SIO.GPIO_OE_SET.Set(mask)
+		}
 	case PinInput:
 		p.setFunc(fnSIO)
 		p.pulloff()

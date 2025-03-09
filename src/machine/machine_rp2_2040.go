@@ -9,6 +9,7 @@ import (
 )
 
 const (
+	cpuFreq          = 125 * MHz
 	_NUMBANK0_GPIOS  = 30
 	_NUMBANK0_IRQS   = 4
 	_NUMIRQ          = 32
@@ -45,27 +46,37 @@ const (
 	PinPIO1
 )
 
+// Analog pins on RP2040.
 const (
-	ClkGPOUT0 clockIndex = iota // GPIO Muxing 0
-	ClkGPOUT1                   // GPIO Muxing 1
-	ClkGPOUT2                   // GPIO Muxing 2
-	ClkGPOUT3                   // GPIO Muxing 3
-	ClkRef                      // Watchdog and timers reference clock
-	ClkSys                      // Processors, bus fabric, memory, memory mapped registers
-	ClkPeri                     // Peripheral clock for UART and SPI
-	ClkUSB                      // USB clock
-	ClkADC                      // ADC clock
-	ClkRTC                      // Real time clock
-	NumClocks
+	ADC0 Pin = GPIO26
+	ADC1 Pin = GPIO27
+	ADC2 Pin = GPIO28
+	ADC3 Pin = GPIO29
+
+	thermADC = 30
 )
 
-func CalcClockDiv(srcFreq, freq uint32) uint32 {
+const (
+	clkGPOUT0 clockIndex = iota // GPIO Muxing 0
+	clkGPOUT1                   // GPIO Muxing 1
+	clkGPOUT2                   // GPIO Muxing 2
+	clkGPOUT3                   // GPIO Muxing 3
+	clkRef                      // Watchdog and timers reference clock
+	clkSys                      // Processors, bus fabric, memory, memory mapped registers
+	clkPeri                     // Peripheral clock for UART and SPI
+	clkUSB                      // USB clock
+	clkADC                      // ADC clock
+	clkRTC                      // Real time clock
+	numClocks
+)
+
+func calcClockDiv(srcFreq, freq uint32) uint32 {
 	// Div register is 24.8 int.frac divider so multiply by 2^8 (left shift by 8)
 	return uint32((uint64(srcFreq) << 8) / uint64(freq))
 }
 
 type clocksType struct {
-	clk   [NumClocks]clockType
+	clk   [numClocks]clockType
 	resus struct {
 		ctrl   volatile.Register32
 		status volatile.Register32
@@ -180,9 +191,9 @@ func irqSetMask(mask uint32, enabled bool) {
 }
 
 func (clks *clocksType) initRTC() {
-	// ClkRTC = pllUSB (48MHz) / 1024 = 46875Hz
-	clkrtc := clks.clock(ClkRTC)
-	clkrtc.configure(0, // No GLMUX
+	// clkRTC = pllUSB (48MHz) / 1024 = 46875Hz
+	crtc := clks.clock(clkRTC)
+	crtc.configure(0, // No GLMUX
 		rp.CLOCKS_CLK_RTC_CTRL_AUXSRC_CLKSRC_PLL_USB,
 		48*MHz,
 		46875)

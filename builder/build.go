@@ -604,6 +604,11 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 		},
 	}
 
+	// Create the output directory, if needed
+	if err := os.MkdirAll(filepath.Dir(outpath), 0777); err != nil {
+		return result, err
+	}
+
 	// Check whether we only need to create an object file.
 	// If so, we don't need to link anything and will be finished quickly.
 	outext := filepath.Ext(outpath)
@@ -665,6 +670,16 @@ func Build(pkgName, outpath, tmpdir string, config *compileopts.Config) (BuildRe
 			return result, fmt.Errorf("buildmode c-shared is only supported on wasm at the moment")
 		}
 		ldflags = append(ldflags, "--no-entry")
+	}
+
+	if config.Options.BuildMode == "wasi-legacy" {
+		if !strings.HasPrefix(config.Triple(), "wasm32-") {
+			return result, fmt.Errorf("buildmode wasi-legacy is only supported on wasm")
+		}
+
+		if config.Options.Scheduler != "none" {
+			return result, fmt.Errorf("buildmode wasi-legacy only supports scheduler=none")
+		}
 	}
 
 	// Add compiler-rt dependency if needed. Usually this is a simple load from

@@ -10,7 +10,7 @@ LLD_SRC ?= $(LLVM_PROJECTDIR)/lld
 
 # Try to autodetect LLVM build tools.
 # Versions are listed here in descending priority order.
-LLVM_VERSIONS = 18 17 16 15
+LLVM_VERSIONS = 19 18 17 16 15
 errifempty = $(if $(1),$(1),$(error $(2)))
 detect = $(shell which $(call errifempty,$(firstword $(foreach p,$(2),$(shell command -v $(p) 2> /dev/null && echo $(p)))),failed to locate $(1) at any of: $(2)))
 toolSearchPathsVersion = $(1)-$(2)
@@ -147,7 +147,7 @@ endif
 MD5SUM ?= md5sum
 
 # Libraries that should be linked in for the statically linked Clang.
-CLANG_LIB_NAMES = clangAnalysis clangAPINotes clangAST clangASTMatchers clangBasic clangCodeGen clangCrossTU clangDriver clangDynamicASTMatchers clangEdit clangExtractAPI clangFormat clangFrontend clangFrontendTool clangHandleCXX clangHandleLLVM clangIndex clangLex clangParse clangRewrite clangRewriteFrontend clangSema clangSerialization clangSupport clangTooling clangToolingASTDiff clangToolingCore clangToolingInclusions
+CLANG_LIB_NAMES = clangAnalysis clangAPINotes clangAST clangASTMatchers clangBasic clangCodeGen clangCrossTU clangDriver clangDynamicASTMatchers clangEdit clangExtractAPI clangFormat clangFrontend clangFrontendTool clangHandleCXX clangHandleLLVM clangIndex clangInstallAPI clangLex clangParse clangRewrite clangRewriteFrontend clangSema clangSerialization clangSupport clangTooling clangToolingASTDiff clangToolingCore clangToolingInclusions
 CLANG_LIBS = $(START_GROUP) $(addprefix -l,$(CLANG_LIB_NAMES)) $(END_GROUP) -lstdc++
 
 # Libraries that should be linked in for the statically linked LLD.
@@ -238,7 +238,7 @@ gen-device-renesas: build/gen-device-svd
 	GO111MODULE=off $(GO) fmt ./src/device/renesas
 
 $(LLVM_PROJECTDIR)/llvm:
-	git clone -b tinygo_xtensa_release_18.1.2 --depth=1 https://github.com/tinygo-org/llvm-project $(LLVM_PROJECTDIR)
+	git clone -b xtensa_release_19.1.2 --depth=1 https://github.com/espressif/llvm-project $(LLVM_PROJECTDIR)
 llvm-source: $(LLVM_PROJECTDIR)/llvm ## Get LLVM sources
 
 # Configure LLVM.
@@ -309,11 +309,9 @@ TEST_PACKAGES_FAST = \
 	container/heap \
 	container/list \
 	container/ring \
-	crypto/des \
 	crypto/ecdsa \
 	crypto/elliptic \
 	crypto/md5 \
-	crypto/rc4 \
 	crypto/sha1 \
 	crypto/sha256 \
 	crypto/sha512 \
@@ -355,17 +353,11 @@ TEST_PACKAGES_FAST = \
 	unique \
 	$(nil)
 
-# Assume this will go away before Go2, so only check minor version.
-ifeq ($(filter $(shell $(GO) env GOVERSION | cut -f 2 -d.), 16 17 18), )
-TEST_PACKAGES_FAST += crypto/internal/nistec/fiat
-else
-TEST_PACKAGES_FAST += crypto/elliptic/internal/fiat
-endif
-
 # archive/zip requires os.ReadAt, which is not yet supported on windows
 # bytes requires mmap
 # compress/flate appears to hang on wasi
 # crypto/aes fails on wasi, needs panic()/recover()
+# crypto/des fails on wasi, needs panic()/recover()
 # crypto/hmac fails on wasi, it exits with a "slice out of range" panic
 # debug/plan9obj requires os.ReadAt, which is not yet supported on windows
 # image requires recover(), which is not yet supported on wasi
@@ -386,6 +378,7 @@ TEST_PACKAGES_LINUX := \
 	archive/zip \
 	compress/flate \
 	crypto/aes \
+	crypto/des \
 	crypto/hmac \
 	debug/dwarf \
 	debug/plan9obj \
@@ -405,10 +398,11 @@ TEST_PACKAGES_LINUX := \
 
 TEST_PACKAGES_DARWIN := $(TEST_PACKAGES_LINUX)
 
+# os/user requires t.Skip() support
 TEST_PACKAGES_WINDOWS := \
 	compress/flate \
+	crypto/des \
 	crypto/hmac \
-	os/user \
 	strconv \
 	text/template/parse \
 	$(nil)
@@ -497,6 +491,8 @@ test-corpus-fast:
 	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GO) test $(GOTESTFLAGS) -timeout=1h -buildmode exe -tags byollvm -run TestCorpus -short . -corpus=testdata/corpus.yaml
 test-corpus-wasi: wasi-libc
 	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GO) test $(GOTESTFLAGS) -timeout=1h -buildmode exe -tags byollvm -run TestCorpus . -corpus=testdata/corpus.yaml -target=wasip1
+test-corpus-wasip2: wasi-libc
+	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GO) test $(GOTESTFLAGS) -timeout=1h -buildmode exe -tags byollvm -run TestCorpus . -corpus=testdata/corpus.yaml -target=wasip2
 
 tinygo-baremetal:
 	# Regression tests that run on a baremetal target and don't fit in either main_test.go or smoketest.
@@ -523,6 +519,8 @@ smoketest: testchdir
 	# regression test for #2563
 	cd tests/os/smoke && $(TINYGO) test -c -target=pybadge && rm smoke.test
 	# test all examples (except pwm)
+	$(TINYGO) build -size short -o test.hex -target=pga2350             examples/echo
+	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=pca10040            examples/blinky1
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=pca10040            examples/adc
@@ -571,21 +569,21 @@ smoketest: testchdir
 	@$(MD5SUM) test.hex
 	# test simulated boards on play.tinygo.org
 ifneq ($(WASM), 0)
-	$(TINYGO) build -size short -o test.wasm -tags=arduino              examples/blinky1
+	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=arduino              examples/blinky1
 	@$(MD5SUM) test.wasm
-	$(TINYGO) build -size short -o test.wasm -tags=hifive1b             examples/blinky1
+	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=hifive1b             examples/blinky1
 	@$(MD5SUM) test.wasm
-	$(TINYGO) build -size short -o test.wasm -tags=reelboard            examples/blinky1
+	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=reelboard            examples/blinky1
 	@$(MD5SUM) test.wasm
-	$(TINYGO) build -size short -o test.wasm -tags=microbit             examples/microbit-blink
+	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=microbit             examples/microbit-blink
 	@$(MD5SUM) test.wasm
-	$(TINYGO) build -size short -o test.wasm -tags=circuitplay_express  examples/blinky1
+	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=circuitplay_express  examples/blinky1
 	@$(MD5SUM) test.wasm
-	$(TINYGO) build -size short -o test.wasm -tags=circuitplay_bluefruit examples/blinky1
+	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=circuitplay_bluefruit examples/blinky1
 	@$(MD5SUM) test.wasm
-	$(TINYGO) build -size short -o test.wasm -tags=mch2022              examples/machinetest
+	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=mch2022              examples/machinetest
 	@$(MD5SUM) test.wasm
-	$(TINYGO) build -size short -o test.wasm -tags=gopher_badge         examples/blinky1
+	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=gopher_badge         examples/blinky1
 	@$(MD5SUM) test.wasm
 endif
 	# test all targets/boards
@@ -745,6 +743,10 @@ endif
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=tiny2350            examples/blinky1
 	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=pico-plus2          examples/blinky1
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=waveshare-rp2040-tiny examples/echo
+	@$(MD5SUM) test.hex
 	# test pwm
 	$(TINYGO) build -size short -o test.hex -target=itsybitsy-m0        examples/pwm
 	@$(MD5SUM) test.hex
@@ -826,6 +828,8 @@ endif
 ifneq ($(XTENSA), 0)
 	$(TINYGO) build -size short -o test.bin -target=esp32-mini32      	examples/blinky1
 	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=esp32c3-supermini   examples/blinky1
+	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target=nodemcu             examples/blinky1
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target m5stack-core2       examples/machinetest
@@ -859,6 +863,14 @@ endif
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=tkey                examples/blinky1
 	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=elecrow-rp2040      examples/blinky1
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=elecrow-rp2350      examples/blinky1
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=hw-651              examples/machinetest
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=hw-651-s110v8       examples/machinetest
+	@$(MD5SUM) test.hex	
 ifneq ($(WASM), 0)
 	$(TINYGO) build -size short -o wasm.wasm -target=wasm               examples/wasm/export
 	$(TINYGO) build -size short -o wasm.wasm -target=wasm               examples/wasm/main

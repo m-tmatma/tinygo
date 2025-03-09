@@ -15,7 +15,7 @@ jobs:
     # statically linked binary.
     runs-on: ubuntu-latest
     container:
-      image: golang:1.23-alpine
+      image: golang:1.24-alpine
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -45,7 +45,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-source
         with:
-          key: llvm-source-18-linux-alpine-v1
+          key: llvm-source-19-linux-alpine-v1
           path: |
             llvm-project/clang/lib/Headers
             llvm-project/clang/include
@@ -70,7 +70,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-18-linux-alpine-v2
+          key: llvm-build-19-linux-alpine-v1
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'
@@ -143,12 +143,12 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.24'
           cache: true
       - name: Install wasmtime
         uses: bytecodealliance/actions/wasmtime/setup@v1
         with:
-          version: "19.0.1"
+          version: "29.0.1"
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
       - name: Download release artifact
@@ -166,7 +166,7 @@ jobs:
   assert-test-linux:
     # Run all tests that can run on Linux, with LLVM assertions enabled to catch
     # potential bugs.
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -186,7 +186,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.24'
           cache: true
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -195,14 +195,14 @@ jobs:
       - name: Install wasmtime
         uses: bytecodealliance/actions/wasmtime/setup@v1
         with:
-          version: "19.0.1"
+          version: "29.0.1"
       - name: Setup `wasm-tools`
         uses: bytecodealliance/actions/wasm-tools/setup@v1
       - name: Restore LLVM source cache
         uses: actions/cache/restore@v4
         id: cache-llvm-source
         with:
-          key: llvm-source-18-linux-asserts-v1
+          key: llvm-source-19-linux-asserts-v1
           path: |
             llvm-project/clang/lib/Headers
             llvm-project/clang/include
@@ -227,7 +227,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-18-linux-asserts-v2
+          key: llvm-build-19-linux-asserts-v1
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'
@@ -294,7 +294,7 @@ jobs:
           - goarch: arm
             toolchain: arm-linux-gnueabihf
             libc: armhf
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04 # note: use the oldest image available! (see above)
     needs: build-linux
     steps:
       - name: Checkout
@@ -312,13 +312,13 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.24'
           cache: true
       - name: Restore LLVM source cache
         uses: actions/cache/restore@v4
         id: cache-llvm-source
         with:
-          key: llvm-source-18-linux-v1
+          key: llvm-source-19-linux-v1
           path: |
             llvm-project/clang/lib/Headers
             llvm-project/clang/include
@@ -343,7 +343,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-18-linux-${{ matrix.goarch }}-v2
+          key: llvm-build-19-linux-${{ matrix.goarch }}-v3
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'

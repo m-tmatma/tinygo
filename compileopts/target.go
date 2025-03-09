@@ -328,14 +328,14 @@ func defaultTarget(options *Options) (*TargetSpec, error) {
 		spec.CPU = "generic"
 		llvmarch = "aarch64"
 		if options.GOOS == "darwin" {
-			spec.Features = "+fp-armv8,+neon"
+			spec.Features = "+ete,+fp-armv8,+neon,+trbe,+v8a"
 			// Looks like Apple prefers to call this architecture ARM64
 			// instead of AArch64.
 			llvmarch = "arm64"
 		} else if options.GOOS == "windows" {
-			spec.Features = "+fp-armv8,+neon,-fmv"
+			spec.Features = "+ete,+fp-armv8,+neon,+trbe,+v8a,-fmv"
 		} else { // linux
-			spec.Features = "+fp-armv8,+neon,-fmv,-outline-atomics"
+			spec.Features = "+ete,+fp-armv8,+neon,+trbe,+v8a,-fmv,-outline-atomics"
 		}
 	case "mips", "mipsle":
 		spec.CPU = "mips32"
@@ -356,15 +356,7 @@ func defaultTarget(options *Options) (*TargetSpec, error) {
 			return nil, fmt.Errorf("invalid GOMIPS=%s: must be hardfloat or softfloat", options.GOMIPS)
 		}
 	case "wasm":
-		llvmarch = "wasm32"
-		spec.CPU = "generic"
-		spec.Features = "+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext"
-		spec.BuildTags = append(spec.BuildTags, "tinygo.wasm")
-		spec.CFlags = append(spec.CFlags,
-			"-mbulk-memory",
-			"-mnontrapping-fptoint",
-			"-msign-ext",
-		)
+		return nil, fmt.Errorf("GOARCH=wasm but GOOS is unset. Please set GOOS to wasm, wasip1, or wasip2.")
 	default:
 		return nil, fmt.Errorf("unknown GOARCH=%s", options.GOARCH)
 	}
@@ -444,23 +436,8 @@ func defaultTarget(options *Options) (*TargetSpec, error) {
 			"--no-insert-timestamp",
 			"--no-dynamicbase",
 		)
-	case "wasip1":
-		spec.GC = "" // use default GC
-		spec.Scheduler = "asyncify"
-		spec.Linker = "wasm-ld"
-		spec.RTLib = "compiler-rt"
-		spec.Libc = "wasi-libc"
-		spec.DefaultStackSize = 1024 * 64 // 64kB
-		spec.LDFlags = append(spec.LDFlags,
-			"--stack-first",
-			"--no-demangle",
-		)
-		spec.Emulator = "wasmtime run --dir={tmpDir}::/tmp {}"
-		spec.ExtraFiles = append(spec.ExtraFiles,
-			"src/runtime/asm_tinygowasm.S",
-			"src/internal/task/task_asyncify_wasm.S",
-		)
-		llvmos = "wasi"
+	case "wasm", "wasip1", "wasip2":
+		return nil, fmt.Errorf("GOOS=%s but GOARCH is unset. Please set GOARCH to wasm", options.GOOS)
 	default:
 		return nil, fmt.Errorf("unknown GOOS=%s", options.GOOS)
 	}

@@ -39,13 +39,13 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.24'
           cache: true
       - name: Restore LLVM source cache
         uses: actions/cache/restore@v4
         id: cache-llvm-source
         with:
-          key: llvm-source-18-${{ matrix.os }}-v2
+          key: llvm-source-19-${{ matrix.os }}-v1
           path: |
             llvm-project/clang/lib/Headers
             llvm-project/clang/include
@@ -70,7 +70,7 @@ jobs:
         uses: actions/cache/restore@v4
         id: cache-llvm-build
         with:
-          key: llvm-build-18-${{ matrix.os }}-v3
+          key: llvm-build-19-${{ matrix.os }}-v1
           path: llvm-build
       - name: Build LLVM
         if: steps.cache-llvm-build.outputs.cache-hit != 'true'
@@ -126,7 +126,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        version: [16, 17, 18]
+        version: [16, 17, 18, 19]
     steps:
       - name: Set up Homebrew
         uses: Homebrew/actions/setup-homebrew@master
@@ -143,15 +143,15 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.24'
           cache: true
       - name: Build TinyGo (LLVM ${{ matrix.version }})
         run: go install -tags=llvm${{ matrix.version }}
       - name: Check binary
         run: tinygo version
       - name: Build TinyGo (default LLVM)
-        if: matrix.version == 18
+        if: matrix.version == 19
         run: go install
       - name: Check binary
-        if: matrix.version == 18
+        if: matrix.version == 19
         run: tinygo version
