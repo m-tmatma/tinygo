@@ -1,6 +1,8 @@
 package cm
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 // List represents a Component Model list.
 // The binary representation of list<T> is similar to a Go slice minus the cap field.

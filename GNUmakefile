@@ -267,16 +267,17 @@ lib/wasi-libc/sysroot/lib/wasm32-wasi/libc.a:
 	cd lib/wasi-libc && $(MAKE) -j4 EXTRA_CFLAGS="-O2 -g -DNDEBUG -mnontrapping-fptoint -msign-ext" MALLOC_IMPL=none CC="$(CLANG)" AR=$(LLVM_AR) NM=$(LLVM_NM)
 
 # Generate WASI syscall bindings
-WASM_TOOLS_MODULE=github.com/bytecodealliance/wasm-tools-go
+WASM_TOOLS_MODULE=go.bytecodealliance.org
 .PHONY: wasi-syscall
 wasi-syscall: wasi-cm
+	rm -rf ./src/internal/wasi/*
 	go run -modfile ./internal/wasm-tools/go.mod $(WASM_TOOLS_MODULE)/cmd/wit-bindgen-go generate --versioned -o ./src/internal -p internal --cm internal/cm ./lib/wasi-cli/wit
 
 # Copy package cm into src/internal/cm
 .PHONY: wasi-cm
 wasi-cm:
-	# rm -rf ./src/internal/cm
-	rsync -rv --delete --exclude '*_test.go' $(shell go list -modfile ./internal/wasm-tools/go.mod -m -f {{.Dir}} $(WASM_TOOLS_MODULE))/cm ./src/internal/
+	rm -rf ./src/internal/cm/*
+	rsync -rv --delete --exclude go.mod --exclude '*_test.go' --exclude '*_json.go' --exclude '*.md' --exclude LICENSE $(shell go list -modfile ./internal/wasm-tools/go.mod -m -f {{.Dir}} $(WASM_TOOLS_MODULE)/cm)/ ./src/internal/cm
 
 # Check for Node.js used during WASM tests.
 NODEJS_VERSION := $(word 1,$(subst ., ,$(shell node -v | cut -c 2-)))
@@ -407,6 +408,36 @@ TEST_PACKAGES_WINDOWS := \
 	text/template/parse \
 	$(nil)
 
+
+# These packages cannot be tested on wasm, mostly because these tests assume a
+# working filesystem. This could perhaps be fixed, by supporting filesystem
+# access when running inside Node.js.
+TEST_PACKAGES_WASM = $(filter-out $(TEST_PACKAGES_NONWASM), $(TEST_PACKAGES_FAST))
+TEST_PACKAGES_NONWASM = \
+	compress/lzw \
+	compress/zlib \
+	crypto/ecdsa \
+	debug/macho \
+	embed/internal/embedtest \
+	go/format \
+	os \
+	testing \
+	$(nil)
+
+# These packages cannot be tested on baremetal.
+#
+# Some reasons why the tests don't pass on baremetal:
+#
+#   * No filesystem is available, so packages like compress/zlib can't be tested
+#     (just like wasm).
+#   * picolibc math functions apparently are less precise, the math package
+#     fails on baremetal.
+TEST_PACKAGES_BAREMETAL = $(filter-out $(TEST_PACKAGES_NONBAREMETAL), $(TEST_PACKAGES_FAST))
+TEST_PACKAGES_NONBAREMETAL = \
+	$(TEST_PACKAGES_NONWASM) \
+	math \
+	$(nil)
+
 # Report platforms on which each standard library package is known to pass tests
 jointmp := $(shell echo /tmp/join.$$$$)
 report-stdlib-tests-pass:
@@ -450,6 +481,8 @@ tinygo-bench-fast:
 	$(TINYGO) test -bench . $(TEST_PACKAGES_HOST)
 
 # Same thing, except for wasi rather than the current platform.
+tinygo-test-wasm:
+	$(TINYGO) test -target wasm $(TEST_PACKAGES_WASM)
 tinygo-test-wasi:
 	$(TINYGO) test -target wasip1 $(TEST_PACKAGES_FAST) $(TEST_PACKAGES_SLOW) ./tests/runtime_wasi
 tinygo-test-wasip1:
@@ -484,6 +517,10 @@ tinygo-bench-wasip2:
 tinygo-bench-wasip2-fast:
 	$(TINYGO) test -target wasip2 -bench . $(TEST_PACKAGES_FAST)
 
+# Run tests on riscv-qemu since that one provides a large amount of memory.
+tinygo-test-baremetal:
+	$(TINYGO) test -target riscv-qemu $(TEST_PACKAGES_BAREMETAL)
+
 # Test external packages in a large corpus.
 test-corpus:
 	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GO) test $(GOTESTFLAGS) -timeout=1h -buildmode exe -tags byollvm -run TestCorpus . -corpus=testdata/corpus.yaml
@@ -493,11 +530,6 @@ test-corpus-wasi: wasi-libc
 	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GO) test $(GOTESTFLAGS) -timeout=1h -buildmode exe -tags byollvm -run TestCorpus . -corpus=testdata/corpus.yaml -target=wasip1
 test-corpus-wasip2: wasi-libc
 	CGO_CPPFLAGS="$(CGO_CPPFLAGS)" CGO_CXXFLAGS="$(CGO_CXXFLAGS)" CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GO) test $(GOTESTFLAGS) -timeout=1h -buildmode exe -tags byollvm -run TestCorpus . -corpus=testdata/corpus.yaml -target=wasip2
-
-tinygo-baremetal:
-	# Regression tests that run on a baremetal target and don't fit in either main_test.go or smoketest.
-	# regression test for #2666: e.g. encoding/hex must pass on baremetal
-	$(TINYGO) test -target cortex-m-qemu encoding/hex
 
 .PHONY: testchdir
 testchdir:
@@ -584,6 +616,8 @@ ifneq ($(WASM), 0)
 	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=mch2022              examples/machinetest
 	@$(MD5SUM) test.wasm
 	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=gopher_badge         examples/blinky1
+	@$(MD5SUM) test.wasm
+	GOOS=js GOARCH=wasm $(TINYGO) build -size short -o test.wasm -tags=pico                 examples/blinky1
 	@$(MD5SUM) test.wasm
 endif
 	# test all targets/boards
@@ -907,6 +941,7 @@ wasmtest:
 
 build/release: tinygo gen-device wasi-libc $(if $(filter 1,$(USE_SYSTEM_BINARYEN)),,binaryen)
 	@mkdir -p build/release/tinygo/bin
+	@mkdir -p build/release/tinygo/lib/bdwgc
 	@mkdir -p build/release/tinygo/lib/clang/include
 	@mkdir -p build/release/tinygo/lib/CMSIS/CMSIS
 	@mkdir -p build/release/tinygo/lib/macos-minimal-sdk
@@ -928,6 +963,7 @@ build/release: tinygo gen-device wasi-libc $(if $(filter 1,$(USE_SYSTEM_BINARYEN
 ifneq ($(USE_SYSTEM_BINARYEN),1)
 	@cp -p  build/wasm-opt$(EXE)         build/release/tinygo/bin
 endif
+	@cp -rp lib/bdwgc/*                  build/release/tinygo/lib/bdwgc
 	@cp -p $(abspath $(CLANG_SRC))/lib/Headers/*.h build/release/tinygo/lib/clang/include
 	@cp -rp lib/CMSIS/CMSIS/Include      build/release/tinygo/lib/CMSIS/CMSIS
 	@cp -rp lib/CMSIS/README.md          build/release/tinygo/lib/CMSIS
@@ -941,6 +977,7 @@ endif
 	@cp -rp lib/musl/crt/crt1.c          build/release/tinygo/lib/musl/crt
 	@cp -rp lib/musl/COPYRIGHT           build/release/tinygo/lib/musl
 	@cp -rp lib/musl/include             build/release/tinygo/lib/musl
+	@cp -rp lib/musl/src/ctype           build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/env             build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/errno           build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/exit            build/release/tinygo/lib/musl/src
@@ -955,8 +992,10 @@ endif
 	@cp -rp lib/musl/src/math            build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/misc            build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/multibyte       build/release/tinygo/lib/musl/src
+	@cp -rp lib/musl/src/sched           build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/signal          build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/stdio           build/release/tinygo/lib/musl/src
+	@cp -rp lib/musl/src/stdlib          build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/string          build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/thread          build/release/tinygo/lib/musl/src
 	@cp -rp lib/musl/src/time            build/release/tinygo/lib/musl/src

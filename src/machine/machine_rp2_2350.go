@@ -212,13 +212,13 @@ func (clks *clocksType) initTicks() {
 	rp.TICKS.SetTIMER0_CTRL_ENABLE(1)
 }
 
-func EnterBootloader() {
-	enterBootloader()
-}
-
 // startTick starts the watchdog tick.
 // On RP2040, the watchdog contained a tick generator used to generate a 1μs tick for the watchdog. This was also
 // distributed to the system timer. On RP2350, the watchdog instead takes a tick input from the system-level ticks block. See Section 8.5.
 func (wd *watchdogImpl) startTick(cycles uint32) {
 	rp.TICKS.WATCHDOG_CTRL.SetBits(1)
+}
+
+func adjustCoreVoltage() bool {
+	return false
 }
