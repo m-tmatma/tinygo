@@ -291,7 +291,8 @@ func Test(pkgName string, stdout, stderr io.Writer, options *compileopts.Options
 	})
 
 	if testConfig.CompileOnly {
-		return true, nil
+		// Return the compiler error, if there is one.
+		return true, err
 	}
 
 	importPath := strings.TrimSuffix(result.ImportPath, ".test")
@@ -339,8 +340,17 @@ func dirsToModuleRootAbs(maindir, modroot string) []string {
 	return dirs
 }
 
+// validateOutputFormat checks if the output file extension matches the expected format
+func validateOutputFormat(outpath, expectedExt string) error {
+	actualExt := filepath.Ext(outpath)
+	if actualExt != expectedExt {
+		return fmt.Errorf("output format %s does not match target format %s", actualExt, expectedExt)
+	}
+	return nil
+}
+
 // Flash builds and flashes the built binary to the given serial port.
-func Flash(pkgName, port string, options *compileopts.Options) error {
+func Flash(pkgName, port, outpath string, options *compileopts.Options) error {
 	config, err := builder.NewConfig(options)
 	if err != nil {
 		return err
@@ -389,13 +399,24 @@ func Flash(pkgName, port string, options *compileopts.Options) error {
 	if !options.Work {
 		defer os.RemoveAll(tmpdir)
 	}
-
+	// Validate output format before building
+	if outpath != "" {
+		if err := validateOutputFormat(outpath, fileExt); err != nil {
+			return err
+		}
+	}
 	// Build the binary.
 	result, err := builder.Build(pkgName, fileExt, tmpdir, config)
 	if err != nil {
 		return err
 	}
 
+	// Save output file if specified (after build, before flashing)
+	if outpath != "" {
+		if err := copyFile(result.Binary, outpath); err != nil {
+			return fmt.Errorf("failed to save output file: %v", err)
+		}
+	}
 	// do we need port reset to put MCU into bootloader mode?
 	if config.Target.PortReset == "true" && flashMethod != "openocd" {
 		port, err := getDefaultPort(port, config.Target.SerialPort)
@@ -1297,6 +1318,11 @@ extension at all.`
 			(https://tinygo.org/docs/reference/microcontrollers/).
 			Examples: "arduino-nano", "d1mini", "xiao".
 
+	-o={filename}:
+			Save the built binary to the specified output file. The file
+			format must match the target's expected format (e.g., .hex,
+			.uf2). Both flashing and saving will be performed.
+
 	-monitor: 
 			Start the serial monitor (see below) immediately after
 			flashing. However, some microcontrollers need a split second
@@ -1609,6 +1635,7 @@ func main() {
 	cpuprofile := flag.String("cpuprofile", "", "cpuprofile output")
 	monitor := flag.Bool("monitor", false, "enable serial monitor")
 	baudrate := flag.Int("baudrate", 115200, "baudrate of serial monitor")
+	gocompatibility := flag.Bool("go-compatibility", true, "enable to check for Go versions compatibility, you can also configure this by setting the TINYGO_GOCOMPATIBILITY environment variable")
 
 	// Internal flags, that are only intended for TinyGo development.
 	printIR := flag.Bool("internal-printir", false, "print LLVM IR")
@@ -1627,7 +1654,7 @@ func main() {
 		flag.BoolVar(&flagTest, "test", false, "supply -test flag to go list")
 	}
 	var outpath string
-	if command == "help" || command == "build" || command == "test" {
+	if command == "help" || command == "build" || command == "test" || command == "flash" {
 		flag.StringVar(&outpath, "o", "", "output filename")
 	}
 
@@ -1686,6 +1713,16 @@ func main() {
 		ocdCommands = strings.Split(*ocdCommandsString, ",")
 	}
 
+	val, ok := os.LookupEnv("TINYGO_GOCOMPATIBILITY")
+	if ok {
+		b, err := strconv.ParseBool(val)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "could not parse TINYGO_GOCOMPATIBILITY value %q: %v\n", val, err)
+			os.Exit(1)
+		}
+		*gocompatibility = b
+	}
+
 	options := &compileopts.Options{
 		GOOS:            goenv.Get("GOOS"),
 		GOARCH:          goenv.Get("GOARCH"),
@@ -1722,6 +1759,7 @@ func main() {
 		Timeout:         *timeout,
 		WITPackage:      witPackage,
 		WITWorld:        witWorld,
+		GoCompatibility: *gocompatibility,
 	}
 	if *printCommands {
 		options.PrintCommands = printCommand
@@ -1778,7 +1816,7 @@ func main() {
 	case "flash", "gdb", "lldb":
 		pkgName := filepath.ToSlash(flag.Arg(0))
 		if command == "flash" {
-			err := Flash(pkgName, *port, options)
+			err := Flash(pkgName, *port, outpath, options)
 			printBuildOutput(err, *flagJSON)
 		} else {
 			if !options.Debug {
@@ -1864,6 +1902,7 @@ func main() {
 						wd = ""
 					}
 					diagnostics.CreateDiagnostics(err).WriteTo(os.Stderr, wd)
+					os.Exit(1)
 				}
 				if !passed {
 					select {

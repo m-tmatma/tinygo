@@ -79,6 +79,26 @@ ifeq (1, $(STATIC))
     BINARYEN_OPTION += -DCMAKE_CXX_FLAGS="-static" -DCMAKE_C_FLAGS="-static"
 endif
 
+# Optimize the binary size for Linux.
+# These flags may work on other platforms, but have only been tested on Linux.
+ifeq ($(uname),Linux)
+    HAS_MOLD := $(shell command -v ld.mold 2> /dev/null)
+    HAS_LLD := $(shell command -v ld.lld 2> /dev/null)
+    LLVM_CFLAGS := -ffunction-sections -fdata-sections -fvisibility=hidden
+    LLVM_LDFLAGS := -Wl,--gc-sections
+    ifneq ($(HAS_MOLD),)
+        # Mold might be slightly faster.
+        LLVM_LDFLAGS += -fuse-ld=mold -Wl,--icf=all
+    else ifneq ($(HAS_LLD),)
+        # LLD is more commonly available.
+        LLVM_LDFLAGS += -fuse-ld=lld -Wl,--icf=all
+    endif
+    LLVM_OPTION += \
+        -DCMAKE_C_FLAGS="$(LLVM_CFLAGS)" \
+        -DCMAKE_CXX_FLAGS="$(LLVM_CFLAGS)"
+    CGO_LDFLAGS += $(LLVM_LDFLAGS)
+endif
+
 # Cross compiling support.
 ifneq ($(CROSS),)
     CC = $(CROSS)-gcc
@@ -187,7 +207,10 @@ fmt-check: ## Warn if any source needs reformatting
 	@unformatted=$$(gofmt -l $(FMT_PATHS)); [ -z "$$unformatted" ] && exit 0; echo "Unformatted:"; for fn in $$unformatted; do echo "  $$fn"; done; exit 1
 
 
-gen-device: gen-device-avr gen-device-esp gen-device-nrf gen-device-sam gen-device-sifive gen-device-kendryte gen-device-nxp gen-device-rp gen-device-renesas ## Generate microcontroller-specific sources
+gen-device: gen-device-avr gen-device-esp gen-device-nrf gen-device-sam gen-device-sifive gen-device-kendryte gen-device-nxp gen-device-rp ## Generate microcontroller-specific sources
+ifneq ($(RENESAS), 0)
+gen-device: gen-device-renesas
+endif
 ifneq ($(STM32), 0)
 gen-device: gen-device-stm32
 endif
@@ -240,7 +263,7 @@ gen-device-renesas: build/gen-device-svd
 	GO111MODULE=off $(GO) fmt ./src/device/renesas
 
 $(LLVM_PROJECTDIR)/llvm:
-	git clone -b xtensa_release_19.1.2 --depth=1 https://github.com/espressif/llvm-project $(LLVM_PROJECTDIR)
+	git clone -b tinygo_20.x --depth=1 https://github.com/tinygo-org/llvm-project $(LLVM_PROJECTDIR)
 llvm-source: $(LLVM_PROJECTDIR)/llvm ## Get LLVM sources
 
 # Configure LLVM.
@@ -457,11 +480,16 @@ TEST_PACKAGES_HOST := $(TEST_PACKAGES_FAST) $(TEST_PACKAGES_WINDOWS)
 TEST_IOFS := false
 endif
 
+TEST_SKIP_FLAG := -skip='TestExtraMethods|TestParseAndBytesRoundTrip/P256/Generic'
+TEST_ADDITIONAL_FLAGS ?=
+
 # Test known-working standard library packages.
 # TODO: parallelize, and only show failing tests (no implied -v flag).
 .PHONY: tinygo-test
 tinygo-test:
-	$(TINYGO) test $(TEST_PACKAGES_HOST) $(TEST_PACKAGES_SLOW)
+	@# TestExtraMethods: used by many crypto packages and uses reflect.Type.Method which is not implemented.
+	@# TestParseAndBytesRoundTrip/P256/Generic: relies on t.Skip() which is not implemented
+	$(TINYGO) test $(TEST_ADDITIONAL_FLAGS) $(TEST_SKIP_FLAG) $(TEST_PACKAGES_HOST) $(TEST_PACKAGES_SLOW)
 	@# io/fs requires os.ReadDir, not yet supported on windows or wasi. It also
 	@# requires a large stack-size. Hence, io/fs is only run conditionally.
 	@# For more details, see the comments on issue #3143.
@@ -469,7 +497,7 @@ ifeq ($(TEST_IOFS),true)
 	$(TINYGO) test -stack-size=6MB io/fs
 endif
 tinygo-test-fast:
-	$(TINYGO) test $(TEST_PACKAGES_HOST)
+	$(TINYGO) test $(TEST_SKIP_FLAG) $(TEST_PACKAGES_HOST)
 tinygo-bench:
 	$(TINYGO) test -bench . $(TEST_PACKAGES_HOST) $(TEST_PACKAGES_SLOW)
 tinygo-bench-fast:
@@ -477,18 +505,18 @@ tinygo-bench-fast:
 
 # Same thing, except for wasi rather than the current platform.
 tinygo-test-wasm:
-	$(TINYGO) test -target wasm $(TEST_PACKAGES_WASM)
+	$(TINYGO) test -target wasm $(TEST_SKIP_FLAG) $(TEST_PACKAGES_WASM)
 tinygo-test-wasi:
-	$(TINYGO) test -target wasip1 $(TEST_PACKAGES_FAST) $(TEST_PACKAGES_SLOW) ./tests/runtime_wasi
+	$(TINYGO) test -target wasip1 $(TEST_SKIP_FLAG) $(TEST_PACKAGES_FAST) $(TEST_PACKAGES_SLOW) ./tests/runtime_wasi
 tinygo-test-wasip1:
-	GOOS=wasip1 GOARCH=wasm $(TINYGO) test $(TEST_PACKAGES_FAST) $(TEST_PACKAGES_SLOW) ./tests/runtime_wasi
+	GOOS=wasip1 GOARCH=wasm $(TINYGO) test $(TEST_SKIP_FLAG) $(TEST_PACKAGES_FAST) $(TEST_PACKAGES_SLOW) ./tests/runtime_wasi
 tinygo-test-wasip1-fast:
-	$(TINYGO) test -target=wasip1 $(TEST_PACKAGES_FAST) ./tests/runtime_wasi
+	$(TINYGO) test -target=wasip1 $(TEST_SKIP_FLAG) $(TEST_PACKAGES_FAST) ./tests/runtime_wasi
 
 tinygo-test-wasip2-slow:
-	$(TINYGO) test -target=wasip2 $(TEST_PACKAGES_SLOW)
+	$(TINYGO) test -target=wasip2 $(TEST_SKIP_FLAG) $(TEST_PACKAGES_SLOW)
 tinygo-test-wasip2-fast:
-	$(TINYGO) test -target=wasip2 $(TEST_PACKAGES_FAST) ./tests/runtime_wasi
+	$(TINYGO) test -target=wasip2 $(TEST_SKIP_FLAG) $(TEST_PACKAGES_FAST) ./tests/runtime_wasi
 
 tinygo-test-wasip2-sum-slow:
 	TINYGO=$(TINYGO) \
@@ -514,7 +542,7 @@ tinygo-bench-wasip2-fast:
 
 # Run tests on riscv-qemu since that one provides a large amount of memory.
 tinygo-test-baremetal:
-	$(TINYGO) test -target riscv-qemu $(TEST_PACKAGES_BAREMETAL)
+	$(TINYGO) test -target riscv-qemu $(TEST_SKIP_FLAG) $(TEST_PACKAGES_BAREMETAL)
 
 # Test external packages in a large corpus.
 test-corpus:
@@ -593,6 +621,8 @@ smoketest: testchdir
 	$(TINYGO) build -size short -o test.hex -target=feather-rp2040      examples/watchdog
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=feather-rp2040      examples/device-id
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=pico2-ice           examples/blinky1
 	@$(MD5SUM) test.hex
 	# test simulated boards on play.tinygo.org
 ifneq ($(WASM), 0)
@@ -768,6 +798,8 @@ endif
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=gopher-badge      examples/blinky1
 	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=gopher-arcade      examples/blinky1
+	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=ae-rp2040           examples/echo
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=thumby              examples/echo
@@ -777,6 +809,8 @@ endif
 	$(TINYGO) build -size short -o test.hex -target=tiny2350            examples/blinky1
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=pico-plus2          examples/blinky1
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=metro-rp2350        examples/blinky1
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=waveshare-rp2040-tiny examples/echo
 	@$(MD5SUM) test.hex
@@ -837,6 +871,8 @@ ifneq ($(STM32), 0)
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=mksnanov3           examples/blinky1
 	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=stm32l0x1           examples/serial
+	@$(MD5SUM) test.hex
 endif
 	$(TINYGO) build -size short -o test.hex -target=atmega328pb         examples/blinkm
 	@$(MD5SUM) test.hex
@@ -879,6 +915,8 @@ ifneq ($(XTENSA), 0)
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target mch2022             examples/machinetest
 	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=xiao-esp32s3   		examples/blinky1
+	@$(MD5SUM) test.bin
 endif
 	$(TINYGO) build -size short -o test.bin -target=esp-c3-32s-kit      examples/blinky1
 	@$(MD5SUM) test.bin
@@ -907,7 +945,7 @@ endif
 	$(TINYGO) build -size short -o test.hex -target=hw-651              examples/machinetest
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=hw-651-s110v8       examples/machinetest
-	@$(MD5SUM) test.hex	
+	@$(MD5SUM) test.hex
 ifneq ($(WASM), 0)
 	$(TINYGO) build -size short -o wasm.wasm -target=wasm               examples/wasm/export
 	$(TINYGO) build -size short -o wasm.wasm -target=wasm               examples/wasm/main
@@ -940,7 +978,7 @@ endif
 
 
 wasmtest:
-	$(GO) test ./tests/wasm
+	cd ./tests/wasm && $(GO) test .
 
 build/release: tinygo gen-device $(if $(filter 1,$(USE_SYSTEM_BINARYEN)),,binaryen)
 	@mkdir -p build/release/tinygo/bin
@@ -958,6 +996,7 @@ build/release: tinygo gen-device $(if $(filter 1,$(USE_SYSTEM_BINARYEN)),,binary
 	@mkdir -p build/release/tinygo/lib/nrfx
 	@mkdir -p build/release/tinygo/lib/picolibc/newlib/libc
 	@mkdir -p build/release/tinygo/lib/picolibc/newlib/libm
+	@mkdir -p build/release/tinygo/lib/wasi-libc/dlmalloc
 	@mkdir -p build/release/tinygo/lib/wasi-libc/libc-bottom-half
 	@mkdir -p build/release/tinygo/lib/wasi-libc/libc-top-half/musl/arch
 	@mkdir -p build/release/tinygo/lib/wasi-libc/libc-top-half/musl/src
@@ -1029,6 +1068,7 @@ endif
 	@cp -rp lib/picolibc/newlib/libm/common      build/release/tinygo/lib/picolibc/newlib/libm
 	@cp -rp lib/picolibc/newlib/libm/math        build/release/tinygo/lib/picolibc/newlib/libm
 	@cp -rp lib/picolibc-stdio.c         build/release/tinygo/lib
+	@cp -rp lib/wasi-libc/dlmalloc/src                              build/release/tinygo/lib/wasi-libc/dlmalloc
 	@cp -rp lib/wasi-libc/libc-bottom-half/cloudlibc                build/release/tinygo/lib/wasi-libc/libc-bottom-half
 	@cp -rp lib/wasi-libc/libc-bottom-half/headers                  build/release/tinygo/lib/wasi-libc/libc-bottom-half
 	@cp -rp lib/wasi-libc/libc-bottom-half/sources                  build/release/tinygo/lib/wasi-libc/libc-bottom-half
@@ -1085,6 +1125,7 @@ endif
 tools:
 	cd internal/tools && go generate -tags tools ./
 
+LINTDIRS=src/os/ src/reflect/
 .PHONY: lint
 lint: tools ## Lint source tree
 	revive -version
@@ -1092,7 +1133,10 @@ lint: tools ## Lint source tree
 	# revive.toml isn't flexible enough to filter out just one kind of error from a checker, so do it with grep here.
 	# Can't use grep with friendly formatter.  Plain output isn't too bad, though.
 	# Use 'grep .' to get rid of stray blank line
-	revive -config revive.toml compiler/... src/{os,reflect}/*.go | grep -v "should have comment or be unexported" | grep '.' | awk '{print}; END {exit NR>0}'
+	revive -config revive.toml compiler/... $$( find $(LINTDIRS) -type f -name '*.go' ) \
+		| grep -v "should have comment or be unexported" \
+		| grep '.' \
+		| awk '{print}; END {exit NR>0}'
 
 SPELLDIRSCMD=find . -depth 1 -type d  | egrep -wv '.git|lib|llvm|src'; find src -depth 1 | egrep -wv 'device|internal|net|vendor'; find src/internal -depth 1 -type d | egrep -wv src/internal/wasi
 .PHONY: spell

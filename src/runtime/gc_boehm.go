@@ -31,10 +31,6 @@ var zeroSizedAlloc uint8
 
 var gcLock task.PMutex
 
-// Normally false, set to true during a GC scan when all other threads get
-// paused.
-var needsResumeWorld bool
-
 func initHeap() {
 	libgc_init()
 
@@ -50,18 +46,6 @@ func gcInit()
 func gcCallback() {
 	// Mark globals and all stacks, and stop the world if we're using threading.
 	gcMarkReachable()
-
-	// If we use a scheduler with parallelism (the threads scheduler for
-	// example), we need to call gcResumeWorld() after scanning has finished.
-	if hasParallelism {
-		if needsResumeWorld {
-			// Should never happen, check for it anyway.
-			runtimePanic("gc: world already stopped")
-		}
-
-		// Note that we need to resume the world after finishing the GC call.
-		needsResumeWorld = true
-	}
 }
 
 func markRoots(start, end uintptr) {
@@ -87,9 +71,8 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
 	}
 
 	gcLock.Lock()
-	needsResumeWorld = false
 	var ptr unsafe.Pointer
-	if layout == gclayout.NoPtrs {
+	if layout == gclayout.NoPtrs.AsPtr() {
 		// This object is entirely pointer free, for example make([]int, ...).
 		// Make sure the GC knows this so it doesn't scan the object
 		// unnecessarily to improve performance.
@@ -104,9 +87,7 @@ func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer {
 		// Memory returned from libgc_malloc has already been zeroed, so nothing
 		// to do here.
 	}
-	if needsResumeWorld {
-		gcResumeWorld()
-	}
+	gcResumeWorld()
 	gcLock.Unlock()
 	if ptr == nil {
 		runtimePanic("gc: out of memory")
@@ -121,11 +102,8 @@ func free(ptr unsafe.Pointer) {
 
 func GC() {
 	gcLock.Lock()
-	needsResumeWorld = false
 	libgc_gcollect()
-	if needsResumeWorld {
-		gcResumeWorld()
-	}
+	gcResumeWorld()
 	gcLock.Unlock()
 }
 

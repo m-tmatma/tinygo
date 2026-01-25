@@ -1,6 +1,6 @@
 ; ModuleID = 'string.go'
 source_filename = "string.go"
-target datalayout = "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-n32:64-S128-ni:1:10:20"
+target datalayout = "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20"
 target triple = "wasm32-unknown-wasi"
 
 %runtime._string = type { ptr, i32 }
@@ -31,13 +31,13 @@ entry:
 }
 
 ; Function Attrs: nounwind
-define hidden i32 @main.stringLen(ptr %s.data, i32 %s.len, ptr %context) unnamed_addr #2 {
+define hidden i32 @main.stringLen(ptr readonly %s.data, i32 %s.len, ptr %context) unnamed_addr #2 {
 entry:
   ret i32 %s.len
 }
 
 ; Function Attrs: nounwind
-define hidden i8 @main.stringIndex(ptr %s.data, i32 %s.len, i32 %index, ptr %context) unnamed_addr #2 {
+define hidden i8 @main.stringIndex(ptr readonly %s.data, i32 %s.len, i32 %index, ptr %context) unnamed_addr #2 {
 entry:
   %.not = icmp ult i32 %index, %s.len
   br i1 %.not, label %lookup.next, label %lookup.throw
@@ -55,16 +55,16 @@ lookup.throw:                                     ; preds = %entry
 declare void @runtime.lookupPanic(ptr) #1
 
 ; Function Attrs: nounwind
-define hidden i1 @main.stringCompareEqual(ptr %s1.data, i32 %s1.len, ptr %s2.data, i32 %s2.len, ptr %context) unnamed_addr #2 {
+define hidden i1 @main.stringCompareEqual(ptr readonly %s1.data, i32 %s1.len, ptr readonly %s2.data, i32 %s2.len, ptr %context) unnamed_addr #2 {
 entry:
   %0 = call i1 @runtime.stringEqual(ptr %s1.data, i32 %s1.len, ptr %s2.data, i32 %s2.len, ptr undef) #3
   ret i1 %0
 }
 
-declare i1 @runtime.stringEqual(ptr, i32, ptr, i32, ptr) #1
+declare i1 @runtime.stringEqual(ptr readonly, i32, ptr readonly, i32, ptr) #1
 
 ; Function Attrs: nounwind
-define hidden i1 @main.stringCompareUnequal(ptr %s1.data, i32 %s1.len, ptr %s2.data, i32 %s2.len, ptr %context) unnamed_addr #2 {
+define hidden i1 @main.stringCompareUnequal(ptr readonly %s1.data, i32 %s1.len, ptr readonly %s2.data, i32 %s2.len, ptr %context) unnamed_addr #2 {
 entry:
   %0 = call i1 @runtime.stringEqual(ptr %s1.data, i32 %s1.len, ptr %s2.data, i32 %s2.len, ptr undef) #3
   %1 = xor i1 %0, true
@@ -72,23 +72,23 @@ entry:
 }
 
 ; Function Attrs: nounwind
-define hidden i1 @main.stringCompareLarger(ptr %s1.data, i32 %s1.len, ptr %s2.data, i32 %s2.len, ptr %context) unnamed_addr #2 {
+define hidden i1 @main.stringCompareLarger(ptr readonly %s1.data, i32 %s1.len, ptr readonly %s2.data, i32 %s2.len, ptr %context) unnamed_addr #2 {
 entry:
   %0 = call i1 @runtime.stringLess(ptr %s2.data, i32 %s2.len, ptr %s1.data, i32 %s1.len, ptr undef) #3
   ret i1 %0
 }
 
-declare i1 @runtime.stringLess(ptr, i32, ptr, i32, ptr) #1
+declare i1 @runtime.stringLess(ptr readonly, i32, ptr readonly, i32, ptr) #1
 
 ; Function Attrs: nounwind
-define hidden i8 @main.stringLookup(ptr %s.data, i32 %s.len, i8 %x, ptr %context) unnamed_addr #2 {
+define hidden i8 @main.stringLookup(ptr readonly %s.data, i32 %s.len, i8 %x, ptr %context) unnamed_addr #2 {
 entry:
   %0 = zext i8 %x to i32
-  %.not = icmp ult i32 %0, %s.len
+  %.not = icmp ugt i32 %s.len, %0
   br i1 %.not, label %lookup.next, label %lookup.throw
 
 lookup.next:                                      ; preds = %entry
-  %1 = getelementptr inbounds i8, ptr %s.data, i32 %0
+  %1 = getelementptr inbounds nuw i8, ptr %s.data, i32 %0
   %2 = load i8, ptr %1, align 1
   ret i8 %2
 
@@ -97,7 +97,7 @@ lookup.throw:                                     ; preds = %entry
   unreachable
 }
 
-attributes #0 = { allockind("alloc,zeroed") allocsize(0) "alloc-family"="runtime.alloc" "target-features"="+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
-attributes #1 = { "target-features"="+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
-attributes #2 = { nounwind "target-features"="+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
+attributes #0 = { allockind("alloc,zeroed") allocsize(0) "alloc-family"="runtime.alloc" "target-features"="+bulk-memory,+bulk-memory-opt,+call-indirect-overlong,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
+attributes #1 = { "target-features"="+bulk-memory,+bulk-memory-opt,+call-indirect-overlong,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
+attributes #2 = { nounwind "target-features"="+bulk-memory,+bulk-memory-opt,+call-indirect-overlong,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
 attributes #3 = { nounwind }

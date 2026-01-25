@@ -108,7 +108,7 @@ func (spi *SPI) SetBaudRate(br uint32) error {
 	var prescale, postdiv uint32
 	freq := CPUFrequency()
 	for prescale = 2; prescale < 255; prescale += 2 {
-		if freq < (prescale+2)*256*br {
+		if uint64(freq) < uint64((prescale+2)*256)*uint64(br) {
 			break
 		}
 	}
@@ -165,27 +165,9 @@ func (spi *SPI) Configure(config SPIConfig) error {
 			config.SDI = SPI1_SDI_PIN
 		}
 	}
-	var okSDI, okSDO, okSCK bool
-	switch spi.Bus {
-	case rp.SPI0:
-		okSDI = config.SDI == 0 || config.SDI == 4 || config.SDI == 16 || config.SDI == 20
-		okSDO = config.SDO == 3 || config.SDO == 7 || config.SDO == 19 || config.SDO == 23
-		okSCK = config.SCK == 2 || config.SCK == 6 || config.SCK == 18 || config.SCK == 22
-	case rp.SPI1:
-		okSDI = config.SDI == 8 || config.SDI == 12 || config.SDI == 24 || config.SDI == 28
-		okSDO = config.SDO == 11 || config.SDO == 15 || config.SDO == 27
-		okSCK = config.SCK == 10 || config.SCK == 14 || config.SCK == 26
+	if err := spi.validPins(config); err != nil {
+		return err
 	}
-
-	switch {
-	case !okSDI:
-		return errSPIInvalidSDI
-	case !okSDO:
-		return errSPIInvalidSDO
-	case !okSCK:
-		return errSPIInvalidSCK
-	}
-
 	if config.Frequency == 0 {
 		config.Frequency = defaultBaud
 	}
@@ -309,7 +291,7 @@ func (spi *SPI) tx(tx []byte) error {
 	//   - set data size to single bytes
 	//   - set the DREQ so that the DMA will fill the SPI FIFO as needed
 	//   - start the transfer
-	ch.READ_ADDR.Set(uint32(uintptr(unsafe.Pointer(&tx[0]))))
+	ch.READ_ADDR.Set(uint32(unsafeNoEscape(unsafe.Pointer(unsafe.SliceData(tx)))))
 	ch.WRITE_ADDR.Set(uint32(uintptr(unsafe.Pointer(&spi.Bus.SSPDR))))
 	ch.TRANS_COUNT.Set(uint32(len(tx)))
 	ch.CTRL_TRIG.Set(rp.DMA_CH0_CTRL_TRIG_INCR_READ |
@@ -327,6 +309,11 @@ func (spi *SPI) tx(tx []byte) error {
 	//     the CPU can go to sleep).
 	for ch.CTRL_TRIG.Get()&rp.DMA_CH0_CTRL_TRIG_BUSY != 0 {
 	}
+
+	// Make sure the read buffer stays alive until this point (in the unlikely
+	// case the tx slice wasn't read after this function returns and a GC cycle
+	// happened inbetween).
+	keepAliveNoEscape(unsafe.Pointer(unsafe.SliceData(tx)))
 
 	// We didn't read any result values, which means the RX FIFO has likely
 	// overflown. We have to clean up this mess now.

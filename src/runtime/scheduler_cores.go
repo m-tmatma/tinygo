@@ -135,6 +135,7 @@ func sleep(duration int64) {
 // This function is called on the first core in the system. It will wake up the
 // other cores when ready.
 func run() {
+	initRand()
 	initHeap()
 
 	go func() {

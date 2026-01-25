@@ -25,7 +25,7 @@ jobs:
       contents: read
     steps:
       - name: Check out the repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Set up Docker Buildx
@@ -35,8 +35,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            tinygo/llvm-19
-            ghcr.io/${{ github.repository_owner }}/llvm-19
+            tinygo/llvm-20
+            ghcr.io/${{ github.repository_owner }}/llvm-20
           tags: |
             type=sha,format=long
             type=raw,value=latest
@@ -52,7 +52,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           target: tinygo-llvm-build
           context: .

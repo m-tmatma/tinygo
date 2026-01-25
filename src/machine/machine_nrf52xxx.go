@@ -12,6 +12,8 @@ func CPUFrequency() uint32 {
 	return 64000000
 }
 
+var adcVDDHPin = Pin(254) // special pin number for VDDH on the nrf52840
+
 // InitADC initializes the registers needed for ADC.
 func InitADC() {
 	// Enable ADC.
@@ -26,7 +28,7 @@ func InitADC() {
 // Samples can be 1(default), 2, 4, 8, 16, 32, 64, 128, 256 samples
 func (a *ADC) Configure(config ADCConfig) {
 	var configVal uint32 = nrf.SAADC_CH_CONFIG_RESP_Bypass<<nrf.SAADC_CH_CONFIG_RESP_Pos |
-		nrf.SAADC_CH_CONFIG_RESP_Bypass<<nrf.SAADC_CH_CONFIG_RESN_Pos |
+		nrf.SAADC_CH_CONFIG_RESN_Bypass<<nrf.SAADC_CH_CONFIG_RESN_Pos |
 		nrf.SAADC_CH_CONFIG_REFSEL_Internal<<nrf.SAADC_CH_CONFIG_REFSEL_Pos |
 		nrf.SAADC_CH_CONFIG_MODE_SE<<nrf.SAADC_CH_CONFIG_MODE_Pos
 
@@ -116,36 +118,43 @@ func (a *ADC) Configure(config ADCConfig) {
 
 // Get returns the current value of an ADC pin in the range 0..0xffff.
 func (a *ADC) Get() uint16 {
-	var pwmPin uint32
+	var adcPin uint32
 	var rawValue volatile.Register16
 
 	switch a.Pin {
 	case 2:
-		pwmPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput0
+		adcPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput0
 	case 3:
-		pwmPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput1
+		adcPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput1
 	case 4:
-		pwmPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput2
+		adcPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput2
 	case 5:
-		pwmPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput3
+		adcPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput3
 	case 28:
-		pwmPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput4
+		adcPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput4
 	case 29:
-		pwmPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput5
+		adcPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput5
 	case 30:
-		pwmPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput6
+		adcPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput6
 	case 31:
-		pwmPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput7
+		adcPin = nrf.SAADC_CH_PSELP_PSELP_AnalogInput7
+	case adcVDDHPin:
+		if Device == "nrf52840" {
+			adcPin = 0x0D // VDDHDIV5 on the nrf52840
+		} else {
+			return 0
+		}
 	default:
 		return 0
 	}
 
 	// Set pin to read.
-	nrf.SAADC.CH[0].PSELN.Set(pwmPin)
-	nrf.SAADC.CH[0].PSELP.Set(pwmPin)
+	nrf.SAADC.CH[0].PSELP.Set(adcPin)
 
 	// Destination for sample result.
-	nrf.SAADC.RESULT.PTR.Set(uint32(uintptr(unsafe.Pointer(&rawValue))))
+	// Note: rawValue doesn't need to be kept alive for the GC, since the
+	// volatile read later will force it to stay alive.
+	nrf.SAADC.RESULT.PTR.Set(uint32(unsafeNoEscape(unsafe.Pointer(&rawValue))))
 	nrf.SAADC.RESULT.MAXCNT.Set(1) // One sample
 
 	// Start tasks.
@@ -301,20 +310,18 @@ func (spi *SPI) Transfer(w byte) (byte, error) {
 // padded until they fit: if len(w) > len(r) the extra bytes received will be
 // dropped and if len(w) < len(r) extra 0 bytes will be sent.
 func (spi *SPI) Tx(w, r []byte) error {
-	// Unfortunately the hardware (on the nrf52832) only supports up to 255
-	// bytes in the buffers, so if either w or r is longer than that the
-	// transfer needs to be broken up in pieces.
-	// The nrf52840 supports far larger buffers however, which isn't yet
-	// supported.
+	// Unfortunately the hardware (on the nrf52832) only supports a limited
+	// amount of bytes in the buffers (depending on the chip), so if either w or
+	// r is longer than that the transfer needs to be broken up in pieces.
 	for len(r) != 0 || len(w) != 0 {
 		// Prepare the SPI transfer: set the DMA pointers and lengths.
 		// read buffer
 		nr := uint32(len(r))
 		if nr > 0 {
-			if nr > 255 {
-				nr = 255
+			if nr > spiMaxBufferSize {
+				nr = spiMaxBufferSize
 			}
-			spi.Bus.RXD.PTR.Set(uint32(uintptr(unsafe.Pointer(&r[0]))))
+			spi.Bus.RXD.PTR.Set(uint32(unsafeNoEscape(unsafe.Pointer(unsafe.SliceData(r)))))
 			r = r[nr:]
 		}
 		spi.Bus.RXD.MAXCNT.Set(nr)
@@ -322,10 +329,10 @@ func (spi *SPI) Tx(w, r []byte) error {
 		// write buffer
 		nw := uint32(len(w))
 		if nw > 0 {
-			if nw > 255 {
-				nw = 255
+			if nw > spiMaxBufferSize {
+				nw = spiMaxBufferSize
 			}
-			spi.Bus.TXD.PTR.Set(uint32(uintptr(unsafe.Pointer(&w[0]))))
+			spi.Bus.TXD.PTR.Set(uint32(unsafeNoEscape(unsafe.Pointer(unsafe.SliceData(w)))))
 			w = w[nw:]
 		}
 		spi.Bus.TXD.MAXCNT.Set(nw)
@@ -335,9 +342,15 @@ func (spi *SPI) Tx(w, r []byte) error {
 		// finished if the transfer is send-only (a common case).
 		spi.Bus.TASKS_START.Set(1)
 		for spi.Bus.EVENTS_END.Get() == 0 {
+			gosched()
 		}
 		spi.Bus.EVENTS_END.Set(0)
 	}
+
+	// Make sure the w and r buffers stay alive for the GC until this point,
+	// since they are used by the hardware but not otherwise visible.
+	keepAliveNoEscape(unsafe.Pointer(unsafe.SliceData(r)))
+	keepAliveNoEscape(unsafe.Pointer(unsafe.SliceData(w)))
 
 	return nil
 }

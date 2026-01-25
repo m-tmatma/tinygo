@@ -1,6 +1,6 @@
 ; ModuleID = 'go1.21.go'
 source_filename = "go1.21.go"
-target datalayout = "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-n32:64-S128-ni:1:10:20"
+target datalayout = "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-i128:128-n32:64-S128-ni:1:10:20"
 target triple = "wasm32-unknown-wasi"
 
 %runtime._string = type { ptr, i32 }
@@ -77,7 +77,7 @@ entry:
 }
 
 ; Function Attrs: nounwind
-define hidden %runtime._string @main.minString(ptr %a.data, i32 %a.len, ptr %b.data, i32 %b.len, ptr %context) unnamed_addr #2 {
+define hidden %runtime._string @main.minString(ptr readonly %a.data, i32 %a.len, ptr readonly %b.data, i32 %b.len, ptr %context) unnamed_addr #2 {
 entry:
   %0 = insertvalue %runtime._string zeroinitializer, ptr %a.data, 0
   %1 = insertvalue %runtime._string %0, i32 %a.len, 1
@@ -86,12 +86,12 @@ entry:
   %stackalloc = alloca i8, align 1
   %4 = call i1 @runtime.stringLess(ptr %a.data, i32 %a.len, ptr %b.data, i32 %b.len, ptr undef) #5
   %5 = select i1 %4, %runtime._string %1, %runtime._string %3
-  %6 = extractvalue %runtime._string %5, 0
+  %6 = select i1 %4, ptr %a.data, ptr %b.data
   call void @runtime.trackPointer(ptr %6, ptr nonnull %stackalloc, ptr undef) #5
   ret %runtime._string %5
 }
 
-declare i1 @runtime.stringLess(ptr, i32, ptr, i32, ptr) #1
+declare i1 @runtime.stringLess(ptr readonly, i32, ptr readonly, i32, ptr) #1
 
 ; Function Attrs: nounwind
 define hidden i32 @main.maxInt(i32 %a, i32 %b, ptr %context) unnamed_addr #2 {
@@ -116,7 +116,7 @@ entry:
 }
 
 ; Function Attrs: nounwind
-define hidden %runtime._string @main.maxString(ptr %a.data, i32 %a.len, ptr %b.data, i32 %b.len, ptr %context) unnamed_addr #2 {
+define hidden %runtime._string @main.maxString(ptr readonly %a.data, i32 %a.len, ptr readonly %b.data, i32 %b.len, ptr %context) unnamed_addr #2 {
 entry:
   %0 = insertvalue %runtime._string zeroinitializer, ptr %a.data, 0
   %1 = insertvalue %runtime._string %0, i32 %a.len, 1
@@ -125,7 +125,7 @@ entry:
   %stackalloc = alloca i8, align 1
   %4 = call i1 @runtime.stringLess(ptr %b.data, i32 %b.len, ptr %a.data, i32 %a.len, ptr undef) #5
   %5 = select i1 %4, %runtime._string %1, %runtime._string %3
-  %6 = extractvalue %runtime._string %5, 0
+  %6 = select i1 %4, ptr %a.data, ptr %b.data
   call void @runtime.trackPointer(ptr %6, ptr nonnull %stackalloc, ptr undef) #5
   ret %runtime._string %5
 }
@@ -171,9 +171,9 @@ declare i32 @llvm.smax.i32(i32, i32) #4
 ; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
 declare i32 @llvm.umax.i32(i32, i32) #4
 
-attributes #0 = { allockind("alloc,zeroed") allocsize(0) "alloc-family"="runtime.alloc" "target-features"="+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
-attributes #1 = { "target-features"="+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
-attributes #2 = { nounwind "target-features"="+bulk-memory,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
+attributes #0 = { allockind("alloc,zeroed") allocsize(0) "alloc-family"="runtime.alloc" "target-features"="+bulk-memory,+bulk-memory-opt,+call-indirect-overlong,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
+attributes #1 = { "target-features"="+bulk-memory,+bulk-memory-opt,+call-indirect-overlong,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
+attributes #2 = { nounwind "target-features"="+bulk-memory,+bulk-memory-opt,+call-indirect-overlong,+mutable-globals,+nontrapping-fptoint,+sign-ext,-multivalue,-reference-types" }
 attributes #3 = { nocallback nofree nounwind willreturn memory(argmem: write) }
 attributes #4 = { nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #5 = { nounwind }

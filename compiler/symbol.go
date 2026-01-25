@@ -142,6 +142,11 @@ func (c *compilerContext) getFunction(fn *ssa.Function) (llvm.Type, llvm.Value) 
 			nocapture := c.ctx.CreateEnumAttribute(llvm.AttributeKindID("nocapture"), 0)
 			llvmFn.AddAttributeAtIndex(i+1, nocapture)
 		}
+		if paramInfo.flags&paramIsReadonly != 0 && paramInfo.llvmType.TypeKind() == llvm.PointerTypeKind {
+			// Readonly pointer parameters (like strings) benefit from being marked as readonly.
+			readonly := c.ctx.CreateEnumAttribute(llvm.AttributeKindID("readonly"), 0)
+			llvmFn.AddAttributeAtIndex(i+1, readonly)
+		}
 	}
 
 	// Set a number of function or parameter attributes, depending on the
@@ -153,6 +158,8 @@ func (c *compilerContext) getFunction(fn *ssa.Function) (llvm.Type, llvm.Value) 
 		// Mark it as noreturn so LLVM can optimize away code.
 		llvmFn.AddFunctionAttr(c.ctx.CreateEnumAttribute(llvm.AttributeKindID("noreturn"), 0))
 	case "internal/abi.NoEscape":
+		llvmFn.AddAttributeAtIndex(1, c.ctx.CreateEnumAttribute(llvm.AttributeKindID("nocapture"), 0))
+	case "machine.keepAliveNoEscape", "machine.unsafeNoEscape":
 		llvmFn.AddAttributeAtIndex(1, c.ctx.CreateEnumAttribute(llvm.AttributeKindID("nocapture"), 0))
 	case "runtime.alloc":
 		// Tell the optimizer that runtime.alloc is an allocator, meaning that it
@@ -253,6 +260,23 @@ func (c *compilerContext) maybeCreateSyntheticFunction(fn *ssa.Function, llvmFn 
 	// The exception is the package initializer, which does appear in the
 	// *ssa.Package members and so shouldn't be created here.
 	if fn.Synthetic != "" && fn.Synthetic != "package initializer" && fn.Synthetic != "generic function" && fn.Synthetic != "range-over-func yield" {
+		if origin := fn.Origin(); origin != nil && origin.RelString(nil) == "internal/abi.Escape" {
+			// This is a special implementation or internal/abi.Escape, which
+			// can only really be implemented in the compiler.
+			// For simplicity we'll only implement pointer parameters for now.
+			if _, ok := fn.Params[0].Type().Underlying().(*types.Pointer); ok {
+				irbuilder := c.ctx.NewBuilder()
+				defer irbuilder.Dispose()
+				b := newBuilder(c, irbuilder, fn)
+				b.createAbiEscapeImpl()
+				llvmFn.SetLinkage(llvm.LinkOnceODRLinkage)
+				llvmFn.SetUnnamedAddr(true)
+			}
+			// If the parameter is not of a pointer type, it will be left
+			// unimplemented. This will result in a linker error if the function
+			// is really called, making it clear it needs to be implemented.
+			return
+		}
 		if len(fn.Blocks) == 0 {
 			c.addError(fn.Pos(), "missing function body")
 			return
@@ -613,7 +637,7 @@ func (c *compilerContext) addStandardAttributes(llvmFn llvm.Value) {
 // linkName is equal to .RelString(nil) on a global and extern is false, but for
 // some symbols this is different (due to //go:extern for example).
 type globalInfo struct {
-	linkName string // go:extern
+	linkName string // go:extern, go:linkname
 	extern   bool   // go:extern
 	align    int    // go:align
 	section  string // go:section
@@ -698,14 +722,14 @@ func (c *compilerContext) getGlobalInfo(g *ssa.Global) globalInfo {
 	// Check for //go: pragmas, which may change the link name (among others).
 	doc := c.astComments[info.linkName]
 	if doc != nil {
-		info.parsePragmas(doc)
+		info.parsePragmas(doc, c, g)
 	}
 	return info
 }
 
 // Parse //go: pragma comments from the source. In particular, it parses the
-// //go:extern pragma on globals.
-func (info *globalInfo) parsePragmas(doc *ast.CommentGroup) {
+// //go:extern and //go:linkname pragmas on globals.
+func (info *globalInfo) parsePragmas(doc *ast.CommentGroup, c *compilerContext, g *ssa.Global) {
 	for _, comment := range doc.List {
 		if !strings.HasPrefix(comment.Text, "//go:") {
 			continue
@@ -725,6 +749,17 @@ func (info *globalInfo) parsePragmas(doc *ast.CommentGroup) {
 		case "//go:section":
 			if len(parts) == 2 {
 				info.section = parts[1]
+			}
+		case "//go:linkname":
+			if len(parts) != 3 || parts[1] != g.Name() {
+				continue
+			}
+			// Only enable go:linkname when the package imports "unsafe".
+			// This is a slightly looser requirement than what gc uses: gc
+			// requires the file to import "unsafe", not the package as a
+			// whole.
+			if hasUnsafeImport(g.Pkg.Pkg) {
+				info.linkName = parts[2]
 			}
 		}
 	}

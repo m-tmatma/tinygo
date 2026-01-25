@@ -73,14 +73,15 @@ func (c ADCChannel) Configure(config ADCConfig) error {
 func (c ADCChannel) getOnce() uint16 {
 	// Make it safe to sample multiple ADC channels in separate go routines.
 	adcLock.Lock()
-	rp.ADC.CS.ReplaceBits(uint32(c), 0b111, rp.ADC_CS_AINSEL_Pos)
+	rp.ADC.CS.ReplaceBits(uint32(c)<<rp.ADC_CS_AINSEL_Pos, rp.ADC_CS_AINSEL_Msk, 0)
 	rp.ADC.CS.SetBits(rp.ADC_CS_START_ONCE)
 
 	waitForReady()
+	v := rp.ADC.RESULT.Get()
 	adcLock.Unlock()
 
 	// rp2040 is a 12-bit ADC, scale raw reading to 16-bits.
-	return uint16(rp.ADC.RESULT.Get()) << 4
+	return uint16(v) << 4
 }
 
 // getVoltage does a one-shot sample and returns a millivolts reading.
@@ -99,7 +100,8 @@ func ReadTemperature() (millicelsius int32) {
 	rp.ADC.CS.SetBits(rp.ADC_CS_TS_EN)
 
 	// T = 27 - (ADC_voltage - 0.706)/0.001721
-	return (27000<<16 - (int32(thermChan.getVoltage())-706<<16)*581) >> 16
+	// 1/0.001721 ≈ 581
+	return int32(((int64(27000) << 16) - ((int64(thermChan.getVoltage()) - (int64(706) << 16)) * 581)) >> 16)
 }
 
 // waitForReady spins waiting for the ADC peripheral to become ready.

@@ -6,7 +6,7 @@ import (
 	"device/arm"
 	"device/sam"
 	"machine"
-	"machine/usb/cdc"
+	_ "machine/usb/cdc"
 	"runtime/interrupt"
 	"runtime/volatile"
 	"unsafe"
@@ -26,8 +26,6 @@ func init() {
 	initUSBClock()
 	initADCClock()
 
-	cdc.EnableUSBCDC()
-	machine.USBDev.Configure(machine.UARTConfig{})
 	machine.InitSerial()
 }
 
@@ -273,6 +271,9 @@ func nanosecondsToTicks(ns int64) timeUnit {
 func sleepTicks(d timeUnit) {
 	for d != 0 {
 		ticks := uint32(d)
+		if d > 0xffff_ffff {
+			ticks = 0xffff_ffff
+		}
 		if !timerSleep(ticks) {
 			// Bail out early to handle a non-time interrupt.
 			return

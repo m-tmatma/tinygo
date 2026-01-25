@@ -20,7 +20,7 @@ jobs:
         run: |
           echo "$HOME/go/bin" >> $GITHUB_PATH
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0 # fetch all history (no sparse checkout)
           submodules: true
@@ -30,7 +30,7 @@ jobs:
         uses: actions/cache@v4
         id: cache-llvm-source
         with:
-          key: llvm-source-19-sizediff-v1
+          key: llvm-source-20-sizediff-v1
           path: |
             llvm-project/compiler-rt
       - name: Download LLVM source
