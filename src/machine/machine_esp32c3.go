@@ -27,16 +27,29 @@ const (
 	PinInput
 	PinInputPullup
 	PinInputPulldown
+	PinAnalog
 )
 
 const (
-	GPIO0  Pin = 0
-	GPIO1  Pin = 1
-	GPIO2  Pin = 2
-	GPIO3  Pin = 3
-	GPIO4  Pin = 4
-	GPIO5  Pin = 5
-	GPIO6  Pin = 6
+	GPIO0 Pin = 0
+	GPIO1 Pin = 1
+	GPIO2 Pin = 2
+	GPIO3 Pin = 3
+	GPIO4 Pin = 4
+	GPIO5 Pin = 5
+	GPIO6 Pin = 6
+)
+
+const (
+	ADC0 Pin = GPIO0
+	ADC1 Pin = GPIO1
+	ADC2 Pin = GPIO2
+	ADC3 Pin = GPIO3
+	ADC4 Pin = GPIO4
+	ADC5 Pin = GPIO5 // avoid when WiFi is used.
+)
+
+const (
 	GPIO7  Pin = 7
 	GPIO8  Pin = 8
 	GPIO9  Pin = 9
@@ -76,13 +89,15 @@ func (p Pin) Configure(config PinConfig) {
 	const function = 1 // function 1 is GPIO for every pin
 	muxConfig |= function << esp.IO_MUX_GPIO_MCU_SEL_Pos
 
-	// Make this pin an input pin (always).
-	muxConfig |= esp.IO_MUX_GPIO_FUN_IE
+	// FUN_IE: disable for PinAnalog (high-Z for ADC)
+	if config.Mode != PinAnalog {
+		muxConfig |= esp.IO_MUX_GPIO_FUN_IE
+	}
 
 	// Set drive strength: 0 is lowest, 3 is highest.
 	muxConfig |= 2 << esp.IO_MUX_GPIO_FUN_DRV_Pos
 
-	// Select pull mode.
+	// Select pull mode (no pulls for PinAnalog).
 	if config.Mode == PinInputPullup {
 		muxConfig |= esp.IO_MUX_GPIO_FUN_WPU
 	} else if config.Mode == PinInputPulldown {
@@ -99,11 +114,26 @@ func (p Pin) Configure(config PinConfig) {
 	case PinOutput:
 		// Set the 'output enable' bit.
 		esp.GPIO.ENABLE_W1TS.Set(1 << p)
-	case PinInput, PinInputPullup, PinInputPulldown:
+	case PinInput, PinInputPullup, PinInputPulldown, PinAnalog:
 		// Clear the 'output enable' bit.
 		esp.GPIO.ENABLE_W1TC.Set(1 << p)
 	}
 }
+
+// configure is the same as Configure, but allows setting a specific GPIO matrix signal.
+func (p Pin) configure(config PinConfig, signal uint32) {
+	p.Configure(config)
+	if signal == 256 {
+		return
+	}
+	if config.Mode == PinOutput {
+		p.outFunc().Set(signal)
+	} else {
+		inFunc(signal).Set(esp.GPIO_FUNC_IN_SEL_CFG_SEL | uint32(p))
+	}
+}
+
+func initI2CExt1Clock() {}
 
 // outFunc returns the FUNCx_OUT_SEL_CFG register used for configuring the
 // output function selection.
@@ -508,102 +538,6 @@ func (uart *UART) writeByte(b byte) error {
 }
 
 func (uart *UART) flush() {}
-
-type Serialer interface {
-	WriteByte(c byte) error
-	Write(data []byte) (n int, err error)
-	Configure(config UARTConfig) error
-	Buffered() int
-	ReadByte() (byte, error)
-	DTR() bool
-	RTS() bool
-}
-
-func initUSB() {
-	// nothing to do here
-}
-
-// USB Serial/JTAG Controller
-// See esp32-c3_technical_reference_manual_en.pdf
-// pg. 736
-type USB_DEVICE struct {
-	Bus *esp.USB_DEVICE_Type
-}
-
-var (
-	_USBCDC = &USB_DEVICE{
-		Bus: esp.USB_DEVICE,
-	}
-
-	USBCDC Serialer = _USBCDC
-)
-
-var (
-	errUSBWrongSize            = errors.New("USB: invalid write size")
-	errUSBCouldNotWriteAllData = errors.New("USB: could not write all data")
-	errUSBBufferEmpty          = errors.New("USB: read buffer empty")
-)
-
-func (usbdev *USB_DEVICE) Configure(config UARTConfig) error {
-	return nil
-}
-
-func (usbdev *USB_DEVICE) WriteByte(c byte) error {
-	if usbdev.Bus.GetEP1_CONF_SERIAL_IN_EP_DATA_FREE() == 0 {
-		return errUSBCouldNotWriteAllData
-	}
-
-	usbdev.Bus.SetEP1_RDWR_BYTE(uint32(c))
-	usbdev.flush()
-
-	return nil
-}
-
-func (usbdev *USB_DEVICE) Write(data []byte) (n int, err error) {
-	if len(data) == 0 || len(data) > 64 {
-		return 0, errUSBWrongSize
-	}
-
-	for i, c := range data {
-		if usbdev.Bus.GetEP1_CONF_SERIAL_IN_EP_DATA_FREE() == 0 {
-			if i > 0 {
-				usbdev.flush()
-			}
-
-			return i, errUSBCouldNotWriteAllData
-		}
-		usbdev.Bus.SetEP1_RDWR_BYTE(uint32(c))
-	}
-
-	usbdev.flush()
-	return len(data), nil
-}
-
-func (usbdev *USB_DEVICE) Buffered() int {
-	return int(usbdev.Bus.GetEP1_CONF_SERIAL_OUT_EP_DATA_AVAIL())
-}
-
-func (usbdev *USB_DEVICE) ReadByte() (byte, error) {
-	if usbdev.Bus.GetEP1_CONF_SERIAL_OUT_EP_DATA_AVAIL() != 0 {
-		return byte(usbdev.Bus.GetEP1_RDWR_BYTE()), nil
-	}
-
-	return 0, nil
-}
-
-func (usbdev *USB_DEVICE) DTR() bool {
-	return false
-}
-
-func (usbdev *USB_DEVICE) RTS() bool {
-	return false
-}
-
-func (usbdev *USB_DEVICE) flush() {
-	usbdev.Bus.SetEP1_CONF_WR_DONE(1)
-	for usbdev.Bus.GetEP1_CONF_SERIAL_IN_EP_DATA_FREE() == 0 {
-	}
-}
 
 // GetRNG returns 32-bit random numbers using the ESP32-C3 true random number generator,
 // Random numbers are generated based on the thermal noise in the system and the

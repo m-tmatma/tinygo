@@ -86,6 +86,64 @@ func (v Value) Interface() interface{} {
 	return valueInterfaceUnsafe(v)
 }
 
+func TypeAssert[T any](v Value) (T, bool) {
+	if v.typecode == nil {
+		panic("reflect.TypeAssert: zero Value")
+	}
+	if !v.isExported() {
+		// Do not allow access to unexported values via TypeAssert,
+		// because they might be pointers that should not be
+		// writable or methods or function that should not be callable.
+		panic("reflect.TypeAssert: cannot return value obtained from unexported field or method")
+	}
+
+	typ := TypeFor[T]()
+
+	// If v is an interface, return the element inside the interface.
+	//
+	// T is a concrete type and v is an interface. For example:
+	//
+	//	var v any = int(1)
+	//	val := ValueOf(&v).Elem()
+	//	TypeAssert[int](val) == val.Interface().(int)
+	//
+	// T is a interface and v is a non-nil interface value. For example:
+	//
+	//	var v any = &someError{}
+	//	val := ValueOf(&v).Elem()
+	//	TypeAssert[error](val) == val.Interface().(error)
+	//
+	// T is a interface and v is a nil interface value. For example:
+	//
+	//	var v error = nil
+	//	val := ValueOf(&v).Elem()
+	//	TypeAssert[error](val) == val.Interface().(error)
+	if v.Kind() == Interface {
+		val, ok := valueInterfaceUnsafe(v).(T)
+		return val, ok
+	}
+
+	// If T is an interface and v is a concrete type. For example:
+	//
+	//	TypeAssert[any](ValueOf(1)) == ValueOf(1).Interface().(any)
+	//	TypeAssert[error](ValueOf(&someError{})) == ValueOf(&someError{}).Interface().(error)
+	if typ.Kind() == Interface {
+		val, ok := valueInterfaceUnsafe(v).(T)
+		return val, ok
+	}
+
+	// Both v and T must be concrete types.
+	// The only way for an type-assertion to match is if the types are equal.
+	if typ != v.typecode {
+		var zero T
+		return zero, false
+	}
+	if !v.isIndirect() {
+		return *(*T)(unsafe.Pointer(&v.value)), true
+	}
+	return *(*T)(v.value), true
+}
+
 // valueInterfaceUnsafe is used by the runtime to hash map keys. It should not
 // be subject to the isExported check.
 func valueInterfaceUnsafe(v Value) interface{} {
@@ -1738,6 +1796,9 @@ func (e *ValueError) Error() string {
 //go:linkname memcpy runtime.memcpy
 func memcpy(dst, src unsafe.Pointer, size uintptr)
 
+//go:linkname memmove runtime.memmove
+func memmove(dst, src unsafe.Pointer, size uintptr)
+
 //go:linkname memzero runtime.memzero
 func memzero(ptr unsafe.Pointer, size uintptr)
 
@@ -1745,10 +1806,7 @@ func memzero(ptr unsafe.Pointer, size uintptr)
 func alloc(size uintptr, layout unsafe.Pointer) unsafe.Pointer
 
 //go:linkname sliceAppend runtime.sliceAppend
-func sliceAppend(srcBuf, elemsBuf unsafe.Pointer, srcLen, srcCap, elemsLen uintptr, elemSize uintptr) (unsafe.Pointer, uintptr, uintptr)
-
-//go:linkname sliceCopy runtime.sliceCopy
-func sliceCopy(dst, src unsafe.Pointer, dstLen, srcLen uintptr, elemSize uintptr) int
+func sliceAppend(srcBuf, elemsBuf unsafe.Pointer, srcLen, srcCap, elemsLen uintptr, elemSize uintptr, layout unsafe.Pointer) (unsafe.Pointer, uintptr, uintptr)
 
 // Copy copies the contents of src into dst until either
 // dst has been filled or src has been exhausted.
@@ -1779,7 +1837,10 @@ func Copy(dst, src Value) int {
 		dst.checkRO()
 	}
 
-	return sliceCopy(dstbuf, srcbuf, dstlen, srclen, dst.typecode.elem().Size())
+	minLen := min(dstlen, srclen)
+	elemSize := dst.typecode.elem().Size()
+	memmove(dstbuf, srcbuf, minLen*elemSize)
+	return int(minLen)
 }
 
 func buflen(v Value) (unsafe.Pointer, uintptr) {
@@ -1810,7 +1871,7 @@ func buflen(v Value) (unsafe.Pointer, uintptr) {
 }
 
 //go:linkname sliceGrow runtime.sliceGrow
-func sliceGrow(buf unsafe.Pointer, oldLen, oldCap, newCap, elemSize uintptr) (unsafe.Pointer, uintptr, uintptr)
+func sliceGrow(buf unsafe.Pointer, oldLen, oldCap, newCap, elemSize uintptr, layout unsafe.Pointer) (unsafe.Pointer, uintptr, uintptr)
 
 // extend slice to hold n new elements
 func extendSlice(v Value, n int) sliceHeader {
@@ -1823,7 +1884,10 @@ func extendSlice(v Value, n int) sliceHeader {
 		old = *(*sliceHeader)(v.value)
 	}
 
-	nbuf, nlen, ncap := sliceGrow(old.data, old.len, old.cap, old.len+uintptr(n), v.typecode.elem().Size())
+	elem := v.typecode.elem()
+	elemSize := elem.Size()
+	elemLayout := elem.gcLayout()
+	nbuf, nlen, ncap := sliceGrow(old.data, old.len, old.cap, old.len+uintptr(n), elemSize, elemLayout)
 
 	return sliceHeader{
 		data: nbuf,
@@ -1862,8 +1926,10 @@ func AppendSlice(s, t Value) Value {
 	}
 	sSlice := (*sliceHeader)(s.value)
 	tSlice := (*sliceHeader)(t.value)
-	elemSize := s.typecode.elem().Size()
-	ptr, len, cap := sliceAppend(sSlice.data, tSlice.data, sSlice.len, sSlice.cap, tSlice.len, elemSize)
+	elem := s.typecode.elem()
+	elemSize := elem.Size()
+	elemLayout := elem.gcLayout()
+	ptr, len, cap := sliceAppend(sSlice.data, tSlice.data, sSlice.len, sSlice.cap, tSlice.len, elemSize, elemLayout)
 	result := &sliceHeader{
 		data: ptr,
 		len:  len,

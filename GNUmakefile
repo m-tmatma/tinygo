@@ -814,6 +814,10 @@ endif
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=waveshare-rp2040-tiny examples/echo
 	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=vicharak_shrike-lite examples/echo
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=xiao-rp2350        examples/blinky1
+	@$(MD5SUM) test.hex
 	# test pwm
 	$(TINYGO) build -size short -o test.hex -target=itsybitsy-m0        examples/pwm
 	@$(MD5SUM) test.hex
@@ -873,6 +877,12 @@ ifneq ($(STM32), 0)
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=stm32l0x1           examples/serial
 	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=arduino-uno-q       examples/blinky1
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=arduino-uno-q       examples/serial
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=arduino-uno-q       examples/blinkm
+	@$(MD5SUM) test.hex
 endif
 	$(TINYGO) build -size short -o test.hex -target=atmega328pb         examples/blinkm
 	@$(MD5SUM) test.hex
@@ -896,12 +906,18 @@ endif
 	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=digispark           examples/blinky1
 	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=digispark           examples/pwm
+	@$(MD5SUM) test.hex
+	$(TINYGO) build -size short -o test.hex -target=digispark           examples/mcp3008
+	@$(MD5SUM) test.hex
 	$(TINYGO) build -size short -o test.hex -target=digispark -gc=leaking examples/blinky1
 	@$(MD5SUM) test.hex
 ifneq ($(XTENSA), 0)
 	$(TINYGO) build -size short -o test.bin -target=esp32-mini32      	examples/blinky1
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target=esp32c3-supermini   examples/blinky1
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=esp32c3-supermini   examples/blinkm
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target=nodemcu             examples/blinky1
 	@$(MD5SUM) test.bin
@@ -915,9 +931,40 @@ ifneq ($(XTENSA), 0)
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target mch2022             examples/machinetest
 	@$(MD5SUM) test.bin
+	# xiao-esp32s3
 	$(TINYGO) build -size short -o test.bin -target=xiao-esp32s3   		examples/blinky1
 	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=xiao-esp32s3   		examples/blinkm
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=xiao-esp32s3   		examples/mcp3008
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=xiao-esp32s3   		examples/pwm
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=xiao-esp32s3   		examples/adc
+	@$(MD5SUM) test.bin
+
+	# esp32s3-wroom1
+	$(TINYGO) build -size short -o test.bin -target=esp32s3-wroom1	    examples/blinkm
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=esp32s3-wroom1	    examples/mcp3008
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=esp32s3-wroom1   	examples/pwm
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=xiao-esp32s3   		examples/adc
+	@$(MD5SUM) test.bin
 endif
+    # esp32c3-supermini
+	$(TINYGO) build -size short -o test.bin -target=esp32c3-supermini	    examples/blinky1
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=esp32c3-supermini	    examples/blinkm
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=esp32c3-supermini	    examples/mcp3008
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=esp32c3-supermini   	examples/pwm
+	@$(MD5SUM) test.bin
+	$(TINYGO) build -size short -o test.bin -target=esp32c3-supermini   	examples/adc
+	@$(MD5SUM) test.bin
+
 	$(TINYGO) build -size short -o test.bin -target=esp-c3-32s-kit      examples/blinky1
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target=qtpy-esp32c3        examples/machinetest
@@ -930,6 +977,7 @@ endif
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.bin -target=esp32c3-12f         examples/blinky1
 	@$(MD5SUM) test.bin
+
 	$(TINYGO) build -size short -o test.bin -target=makerfabs-esp32c3spi35 examples/machinetest
 	@$(MD5SUM) test.bin
 	$(TINYGO) build -size short -o test.hex -target=hifive1b            examples/blinky1

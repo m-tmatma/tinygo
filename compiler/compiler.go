@@ -1599,7 +1599,8 @@ func (b *builder) createBuiltin(argTypes []types.Type, argValues []llvm.Value, c
 		elemsLen := b.CreateExtractValue(elems, 1, "append.elemsLen")
 		elemType := b.getLLVMType(argTypes[0].Underlying().(*types.Slice).Elem())
 		elemSize := llvm.ConstInt(b.uintptrType, b.targetData.TypeAllocSize(elemType), false)
-		result := b.createRuntimeCall("sliceAppend", []llvm.Value{srcBuf, elemsBuf, srcLen, srcCap, elemsLen, elemSize}, "append.new")
+		elemLayout := b.createObjectLayout(elemType, pos)
+		result := b.createRuntimeCall("sliceAppend", []llvm.Value{srcBuf, elemsBuf, srcLen, srcCap, elemsLen, elemSize, elemLayout}, "append.new")
 		newPtr := b.CreateExtractValue(result, 0, "append.newPtr")
 		newLen := b.CreateExtractValue(result, 1, "append.newLen")
 		newCap := b.CreateExtractValue(result, 2, "append.newCap")
@@ -1681,13 +1682,41 @@ func (b *builder) createBuiltin(argTypes []types.Type, argValues []llvm.Value, c
 	case "copy":
 		dst := argValues[0]
 		src := argValues[1]
+		// Fetch the lengths.
 		dstLen := b.CreateExtractValue(dst, 1, "copy.dstLen")
 		srcLen := b.CreateExtractValue(src, 1, "copy.srcLen")
-		dstBuf := b.CreateExtractValue(dst, 0, "copy.dstArray")
-		srcBuf := b.CreateExtractValue(src, 0, "copy.srcArray")
+		// Find the minimum of the lengths.
+		minFuncName := "llvm.umin.i" + strconv.Itoa(b.uintptrType.IntTypeWidth())
+		minFunc := b.mod.NamedFunction(minFuncName)
+		if minFunc.IsNil() {
+			fnType := llvm.FunctionType(b.uintptrType, []llvm.Type{b.uintptrType, b.uintptrType}, false)
+			minFunc = llvm.AddFunction(b.mod, minFuncName, fnType)
+		}
+		minLen := b.CreateCall(minFunc.GlobalValueType(), minFunc, []llvm.Value{dstLen, srcLen}, "copy.n")
+		// Multiply the length by the element size.
 		elemType := b.getLLVMType(argTypes[0].Underlying().(*types.Slice).Elem())
 		elemSize := llvm.ConstInt(b.uintptrType, b.targetData.TypeAllocSize(elemType), false)
-		return b.createRuntimeCall("sliceCopy", []llvm.Value{dstBuf, srcBuf, dstLen, srcLen, elemSize}, "copy.n"), nil
+		// NOTE: This is also NSW when uintptr is int, but we can only choose one through the C API?
+		size := b.CreateNUWMul(minLen, elemSize, "copy.size")
+		// Fetch the pointers.
+		dstBuf := b.CreateExtractValue(dst, 0, "copy.dstPtr")
+		srcBuf := b.CreateExtractValue(src, 0, "copy.srcPtr")
+		// Create a memcpy.
+		call := b.createMemCopy("memmove", dstBuf, srcBuf, size)
+		align := b.targetData.ABITypeAlignment(elemType)
+		if align > 1 {
+			// Apply the type's alignment to the arguments.
+			// LLVM sometimes turns constant-length moves into loads and stores.
+			// It may use this alignment for the created loads and stores.
+			alignAttr := b.ctx.CreateEnumAttribute(llvm.AttributeKindID("align"), uint64(align))
+			call.AddCallSiteAttribute(1, alignAttr)
+			call.AddCallSiteAttribute(2, alignAttr)
+		}
+		// Extend and return the copied length.
+		if b.targetData.TypeAllocSize(minLen.Type()) < b.targetData.TypeAllocSize(b.intType) {
+			minLen = b.CreateZExt(minLen, b.intType, "copy.n.zext")
+		}
+		return minLen, nil
 	case "delete":
 		m := argValues[0]
 		key := argValues[1]
@@ -1715,20 +1744,66 @@ func (b *builder) createBuiltin(argTypes []types.Type, argValues []llvm.Value, c
 		return llvmLen, nil
 	case "min", "max":
 		// min and max builtins, added in Go 1.21.
-		// We can simply reuse the existing binop comparison code, which has all
-		// the edge cases figured out already.
-		tok := token.LSS
-		if callName == "max" {
-			tok = token.GTR
-		}
-		result := argValues[0]
-		typ := argTypes[0]
-		for _, arg := range argValues[1:] {
-			cmp, err := b.createBinOp(tok, typ, typ, result, arg, pos)
-			if err != nil {
-				return result, err
+		// Find the corresponding intrinsic name.
+		ty := argTypes[0].Underlying().(*types.Basic)
+		llvmType := b.getLLVMType(ty)
+		info := ty.Info()
+		var prefix, delimeter, typeName string
+		if info&types.IsInteger != 0 {
+			// This is an integer value.
+			// Use the LLVM int min/max intrinsics.
+			prefix = "llvm.s"
+			if info&types.IsUnsigned != 0 {
+				prefix = "llvm.u"
 			}
-			result = b.CreateSelect(cmp, result, arg, "")
+			delimeter = ".i"
+			typeName = strconv.Itoa(llvmType.IntTypeWidth())
+		} else {
+			switch ty.Kind() {
+			case types.String:
+				// Strings do not have an equivalent intrinsic.
+				// Implement with compares and selects.
+				tok := token.LSS
+				if callName == "max" {
+					tok = token.GTR
+				}
+				result := argValues[0]
+				typ := argTypes[0]
+				for _, arg := range argValues[1:] {
+					cmp, err := b.createBinOp(tok, typ, typ, result, arg, pos)
+					if err != nil {
+						return result, err
+					}
+					result = b.CreateSelect(cmp, result, arg, "")
+				}
+				return result, nil
+			case types.Float32:
+				typeName = "f32"
+			case types.Float64:
+				typeName = "f64"
+			default:
+				return llvm.Value{}, b.makeError(pos, "todo: min/max: unknown type")
+			}
+			// There are a few edge cases with floating point min/max:
+			// min(-0.0, +0.0) = -0.0
+			// min(NaN, number) = NaN
+			// The llvm.minimum.*/llvm.maximum.* intrinsics match this behavior.
+			// Neither Go nor LLVM defines the bit representation of resulting NaNs.
+			prefix = "llvm."
+			delimeter = "imum."
+		}
+		intrinsicName := prefix + callName + delimeter + typeName
+		// Find or create the intrinsic.
+		llvmFn := b.mod.NamedFunction(intrinsicName)
+		if llvmFn.IsNil() {
+			fnType := llvm.FunctionType(llvmType, []llvm.Type{llvmType, llvmType}, false)
+			llvmFn = llvm.AddFunction(b.mod, intrinsicName, fnType)
+		}
+		// Call the intrinsic repeatedly to merge the arguments.
+		callType := llvmFn.GlobalValueType()
+		result := argValues[0]
+		for _, arg := range argValues[1:] {
+			result = b.CreateCall(callType, llvmFn, []llvm.Value{result, arg}, "")
 		}
 		return result, nil
 	case "panic":

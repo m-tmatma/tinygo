@@ -259,10 +259,7 @@ func (i2c *I2C) init(config I2CConfig) error {
 //go:inline
 func (i2c *I2C) reset() {
 	resetVal := i2c.deinit()
-	rp.RESETS.RESET.ClearBits(resetVal)
-	// Wait until reset is done.
-	for !rp.RESETS.RESET_DONE.HasBits(resetVal) {
-	}
+	unresetBlockWait(resetVal)
 }
 
 // deinit sets reset bit for I2C. Must call reset to reenable I2C after deinit.
@@ -276,15 +273,13 @@ func (i2c *I2C) deinit() (resetVal uint32) {
 		resetVal = rp.RESETS_RESET_I2C1
 	}
 	// Perform I2C reset.
-	rp.RESETS.RESET.SetBits(resetVal)
+	resetBlock(resetVal)
 
 	return resetVal
 }
 
 // tx performs blocking write followed by read to I2C bus.
 func (i2c *I2C) tx(addr uint8, tx, rx []byte) (err error) {
-	const timeout_us = 4_000
-	deadline := ticks() + timeout_us
 	if addr >= 0x80 || isReservedI2CAddr(addr) {
 		return errInvalidTgtAddr
 	}
@@ -294,6 +289,14 @@ func (i2c *I2C) tx(addr uint8, tx, rx []byte) (err error) {
 	if txlen == 0 && rxlen == 0 {
 		return nil
 	}
+
+	// Base 4ms for small register pokes.
+	// Add per-byte budget. 100us/byte is conservative at 400kHz and still ok at 100kHz for modest sizes.
+	timeout_us := uint64(4_000) + uint64(txlen+rxlen)*100
+	// Cap so it doesn't go insane:
+	timeout_us = min(timeout_us, 500_000)
+
+	deadline := ticks() + timeout_us
 
 	err = i2c.disable()
 	if err != nil {
